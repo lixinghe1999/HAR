@@ -79,7 +79,7 @@ def prepare_pose(data_dir, split, takes_by_uid, slice_window=1, max_frames=1000)
         pose[take_id] = pose_data
         aria_trajectory[take_id] = camera_data
         pose_sum.append(len(pose_data) - slice_window)
-        # break
+        break
         if sum(pose_sum) > max_frames: # don't use the full dataset
             # print('early stop, do not use full dataset')
             break
@@ -120,20 +120,21 @@ def read_imu_all(provider, stream_id_imu, sample_rate=800):
     return imu
 def extract(path):
     provider = data_provider.create_vrs_data_provider(path)
+
     stream_id_mic = provider.get_stream_id_from_label("mic")
+    audio = read_audio_all(provider, stream_id_mic)
+    sf.write(path.replace('.vrs', '.flac'), audio, 48000)
+
     stream_id_imu_right = provider.get_stream_id_from_label("imu-right")
     stream_id_imu_left = provider.get_stream_id_from_label("imu-left")
-    audio = read_audio_all(provider, stream_id_mic)
-    # audio = audio[:, 0] # mono only
-    sf.write(path.replace('.vrs', '.flac'), audio, 48000)
-    # imu_right = read_imu_all(provider, stream_id_imu_right)
-    # imu_left = read_imu_all(provider, stream_id_imu_left)
-    # if imu_right.shape[1] > imu_left.shape[1]:
-    #     imu_right = imu_right[:, :imu_left.shape[1]]
-    # else:
-    #     imu_left = imu_left[:, :imu_right.shape[1]]
-    # imu = np.concatenate([imu_right, imu_left], axis=0)
-    # np.save(path.replace('.vrs', '.npy'), imu)  
+    imu_right = read_imu_all(provider, stream_id_imu_right)
+    imu_left = read_imu_all(provider, stream_id_imu_left)
+    if imu_right.shape[1] > imu_left.shape[1]:
+        imu_right = imu_right[:, :imu_left.shape[1]]
+    else:
+        imu_left = imu_left[:, :imu_right.shape[1]]
+    imu = np.concatenate([imu_right, imu_left], axis=0)
+    np.save(path.replace('.vrs', '.npy'), imu)  
 def extract_data_vrs():
     import multiprocessing
     data_dir = '../dataset/egoexo/takes'

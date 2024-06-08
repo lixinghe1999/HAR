@@ -6,9 +6,8 @@ import json
 # from projectaria_tools.core.sensor_data import TimeDomain, TimeQueryOptions
 import matplotlib.pyplot as plt
 import soundfile as sf
-import librosa
-from egoexo_utils import prepare_pose
-from text_cluster import label_dict, cluster_plot, cluster_map, close_to
+from utils.egoexo_utils import prepare_pose
+from utils.text_cluster import label_dict, cluster_plot, cluster_map, close_to
 class EgoExo_pose(Dataset):
     def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=1, max_frames=1000000, stride=5):
         self.data_dir = data_dir
@@ -65,6 +64,7 @@ class EgoExo_pose(Dataset):
 
         timestamp = int(frames_window[-1]) / 30 - self.slice_window // 2
         take_meta = self.takes_by_uid[take_uid]
+        print(take_meta['root_dir'], take_meta['vrs_relative_path'])
         take_path = os.path.join(self.data_dir, take_meta['root_dir'], take_meta['vrs_relative_path'])
         audio_path = take_path.replace('.vrs', '.flac')
         imu_path = take_path.replace('.vrs', '.npy')

@@ -9,7 +9,7 @@ import string
 import librosa
 import json
 from tqdm import tqdm
-from text_cluster import close_to, cluster_plot, cluster_map
+from code.utils.text_cluster import close_to, cluster_plot, cluster_map
 
 def clean_moment_text(narration_text: str) -> list:
     return (
