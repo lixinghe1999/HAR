@@ -1,11 +1,8 @@
 import numpy as np
 from scipy.signal import stft
-from pyroomacoustics import doa, Room, ShoeBox
-from random import uniform, sample
 import librosa
+from pyroomacoustics.doa import MUSIC
 import os
-import soundfile as sf
-import matplotlib.pyplot as plt
 
 fs = 16000 
 nfft = 1024

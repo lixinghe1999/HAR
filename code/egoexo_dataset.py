@@ -103,19 +103,21 @@ def load_data(timestamp, audio_path, imu_path, features_path, tags_path, music_p
     imu = imu[:, int(start * 800): int(start * 800) + int(window_sec * 800)]
     if imu.shape[1] < window_sec * 800:
         imu = np.pad(imu, ((0, 0), (0, int(window_sec * 800 - imu.shape[1]))), 'constant', constant_values=0)
+    imu = imu[:, ::5]
 
-    start_idx = int(start / 2.5)
-    end_idx = start_idx + int(window_sec / 2.5)
-    features = np.load(features_path)[start_idx:end_idx]
-    tags = json.load(open(tags_path))[start_idx:end_idx]
+    # start_idx = int(start / 2.5)
+    # end_idx = start_idx + int(window_sec / 2.5)
+    # features = np.load(features_path)[start_idx:end_idx]
+    # tags = json.load(open(tags_path))[start_idx:end_idx]
 
-    tags = [t['tags'] for t in tags]
-    tags_label = [[l['label'] for l in t] for t in tags]
-    tags_prob = [[l['probability'] for l in t] for t in tags]
-    music = np.load(music_path)[start_idx:end_idx]
-    return audio, imu, features, tags_label, music
+    # tags = [t['tags'] for t in tags]
+    # tags_label = [[l['label'] for l in t] for t in tags]
+    # tags_prob = [[l['probability'] for l in t] for t in tags]
+    # music = np.load(music_path)[start_idx:end_idx]
+    # return audio, imu, features, tags_label, music
+    return audio, imu
 class EgoExo_atomic(Dataset):
-    def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=1):
+    def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=2):
         self.data_dir = data_dir
         self.meta = json.load(open(os.path.join(data_dir, 'takes.json')))
         self.takes_by_uid = {x["take_uid"]: x for x in self.meta}
@@ -171,12 +173,9 @@ class EgoExo_atomic(Dataset):
         tags_path = os.path.join(self.data_dir, take_meta['root_dir'], 'tags.json')
         music_path = os.path.join(self.data_dir, take_meta['root_dir'], 'music.npy')
 
-        audio, imu, features, tags, music = load_data(timestamp, audio_path, imu_path, features_path, tags_path, music_path, self.window_sec)
+        audio, imu = load_data(timestamp, audio_path, imu_path, features_path, tags_path, music_path, self.window_sec)
         dict_out['audio'] = audio
-        dict_out['imu'] = imu
-        dict_out['features'] = features
-        dict_out['tags'] = tags
-        dict_out['ssl'] = music
+        dict_out['imu'] = imu.T
         return dict_out
 
 def visualize_audio(audio, folder):
@@ -221,8 +220,7 @@ def visualize_pose(pose, visible, folder):
     for _ in connections:
         lines.append(axs.plot([0, 0], [0, 0], [0, 0], c='b')[0])
     anim = FuncAnimation(fig, animate, frames = pose.shape[0], interval = 100, blit = True)
-    anim.save(folder + '/pose_animation.gif', writer = 'ffmpeg', fps = 10)    
-   
+    anim.save(folder + '/pose_animation.gif', writer = 'ffmpeg', fps = 10)     
 def visualize_imu(imu, folder):
     fig = plt.figure()
     assert imu.shape[0] == 12

@@ -1,4 +1,4 @@
-from models.egoexo_models import EgoExo4D_Baseline
+from models.egoexo_pose import EgoExo4D_Baseline
 from models.egoexo_motion import EgoExo4D_Motion
 from egoexo_dataset import EgoExo_pose
 import torch

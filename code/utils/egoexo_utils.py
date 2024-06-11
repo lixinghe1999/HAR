@@ -121,9 +121,9 @@ def read_imu_all(provider, stream_id_imu, sample_rate=800):
 def extract(path):
     provider = data_provider.create_vrs_data_provider(path)
 
-    stream_id_mic = provider.get_stream_id_from_label("mic")
-    audio = read_audio_all(provider, stream_id_mic)
-    sf.write(path.replace('.vrs', '.flac'), audio, 48000)
+    # stream_id_mic = provider.get_stream_id_from_label("mic")
+    # audio = read_audio_all(provider, stream_id_mic)
+    # sf.write(path.replace('.vrs', '.flac'), audio, 48000)
 
     stream_id_imu_right = provider.get_stream_id_from_label("imu-right")
     stream_id_imu_left = provider.get_stream_id_from_label("imu-left")
