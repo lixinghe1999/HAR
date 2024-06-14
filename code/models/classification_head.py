@@ -3,7 +3,6 @@
 
 import torch.nn as nn
 
-import pytorch_lightning as pl
 
 class Head(nn.Module):
     """
@@ -31,7 +30,7 @@ class Head(nn.Module):
         return self.head(self.encoder(batch))
 
 
-class ZeroShotClassification(pl.LightningModule):
+class ZeroShotClassification(nn.Module):
     """
     zero shot activities classification
     """

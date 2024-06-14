@@ -17,8 +17,6 @@ import numpy as np
 import torch
 import torchaudio
 from tqdm import tqdm
-
-torchaudio.set_audio_backend("sox_io")
 import torchvision.io as io
 
 PATH_EGO_META = "../v1/ego4d.json"

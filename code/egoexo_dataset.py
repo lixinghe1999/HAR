@@ -2,12 +2,11 @@ import numpy as np
 from torch.utils.data import Dataset
 import os
 import json
-# from projectaria_tools.core import data_provider
-# from projectaria_tools.core.sensor_data import TimeDomain, TimeQueryOptions
 import matplotlib.pyplot as plt
 import soundfile as sf
 from utils.egoexo_utils import prepare_pose
 from utils.text_cluster import label_dict, cluster_plot, cluster_map, close_to
+
 class EgoExo_pose(Dataset):
     def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=1, max_frames=1000000, stride=5):
         self.data_dir = data_dir
@@ -92,33 +91,10 @@ def parse_skeleton(skeleton, joint_names):
             flags.append(0) #not visible
             poses.append([-1,-1,-1]) #not visible
     return poses, flags
-def load_data(timestamp, audio_path, imu_path, features_path, tags_path, music_path, window_sec):
-    start = timestamp - window_sec/2
-
-    audio = sf.read(audio_path, start=int(start*48000), stop=int(start*48000) + int(window_sec * 48000))[0].T
-    if audio.shape[1] < window_sec * 48000:
-        audio = np.pad(audio, ((0, 0), (0, int(window_sec * 48000 - audio.shape[1]))), 'constant', constant_values=0)
-        
-    imu = np.load(imu_path).astype(np.float32)
-    imu = imu[:, int(start * 800): int(start * 800) + int(window_sec * 800)]
-    if imu.shape[1] < window_sec * 800:
-        imu = np.pad(imu, ((0, 0), (0, int(window_sec * 800 - imu.shape[1]))), 'constant', constant_values=0)
-    imu = imu[:, ::5]
-
-    # start_idx = int(start / 2.5)
-    # end_idx = start_idx + int(window_sec / 2.5)
-    # features = np.load(features_path)[start_idx:end_idx]
-    # tags = json.load(open(tags_path))[start_idx:end_idx]
-
-    # tags = [t['tags'] for t in tags]
-    # tags_label = [[l['label'] for l in t] for t in tags]
-    # tags_prob = [[l['probability'] for l in t] for t in tags]
-    # music = np.load(music_path)[start_idx:end_idx]
-    # return audio, imu, features, tags_label, music
-    return audio, imu
 class EgoExo_atomic(Dataset):
-    def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=2):
+    def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=2, modal=['audio', 'imu', 'efficientAT']):
         self.data_dir = data_dir
+        self.modal = modal
         self.meta = json.load(open(os.path.join(data_dir, 'takes.json')))
         self.takes_by_uid = {x["take_uid"]: x for x in self.meta}
         print('Total number of takes:', len(self.takes_by_uid))
@@ -155,27 +131,33 @@ class EgoExo_atomic(Dataset):
     def __getitem__(self, idx):
         dict_out = {}
         take_uid, description = self.all_descriptions[idx]
-        text = description['text']
-        timestamp = description['timestamp']
-        subject = description['subject']
-        ego_visible = description['ego_visible']
-        # dict_out['take_uid'] = take_uid
-        # dict_out['timestamp'] = timestamp
-        dict_out['text'] = text
-        dict_out['subject'] = subject
-        dict_out['ego_visible'] = ego_visible
+        dict_out['text'] = description['text']
 
         take_meta = self.takes_by_uid[take_uid]
         take_path = os.path.join(self.data_dir, take_meta['root_dir'], take_meta['vrs_relative_path'])
-        audio_path = take_path.replace('.vrs', '.flac')
-        imu_path = take_path.replace('.vrs', '.npy')
-        features_path = os.path.join(self.data_dir, take_meta['root_dir'], 'features.npy')
-        tags_path = os.path.join(self.data_dir, take_meta['root_dir'], 'tags.json')
-        music_path = os.path.join(self.data_dir, take_meta['root_dir'], 'music.npy')
+        start = description['timestamp'] - self.window_sec/2
 
-        audio, imu = load_data(timestamp, audio_path, imu_path, features_path, tags_path, music_path, self.window_sec)
-        dict_out['audio'] = audio
-        dict_out['imu'] = imu.T
+        if 'audio' in self.modal:
+            audio_path = take_path.replace('.vrs', '.flac')
+            audio = sf.read(audio_path, start=int(start*48000), stop=int(start*48000) + int(self.window_sec * 48000))[0].T
+            if audio.shape[1] < self.window_sec * 48000:
+                audio = np.pad(audio, ((0, 0), (0, int(self.window_sec * 48000 - audio.shape[1]))), 'constant', constant_values=0)
+            dict_out['audio'] = audio
+        if 'imu' in self.modal:
+            imu_path = take_path.replace('.vrs', '.npy')
+            imu = np.load(imu_path).astype(np.float32)
+            imu = imu[:, int(start * 800): int(start * 800) + int(self.window_sec * 800)]
+            if imu.shape[1] < self.window_sec * 800:
+                imu = np.pad(imu, ((0, 0), (0, int(self.window_sec * 800 - imu.shape[1]))), 'constant', constant_values=0)
+            dict_out['imu'] = imu[:, ::5].T
+        if 'efficientAT' in self.modal:
+            features_path = os.path.join(self.data_dir, take_meta['root_dir'], 'tags.json').replace('takes', 'processed')
+            tags = json.load(open(features_path))
+            start_index = int(start / 1)
+            end_index = int((start + self.window_sec)/1)
+            tags = tags[start_index:end_index]
+            dict_out['tags'] = tags
+            print(features_path, tags)
         return dict_out
 
 def visualize_audio(audio, folder):
@@ -248,6 +230,7 @@ def overlap_pose_atomic():
             both_files.append(atomic_file)
     print('Total number of atomic descriptions:', len(atomic_files), 'Total number of poses:', len(pose_files), 'Total number of both:', len(both_files))
 if __name__ == '__main__':
+    from tqdm import tqdm
     # overlap_pose_atomic()
     # dataset = EgoExo_pose(split='train')
     # idx = random.randint(0, len(dataset)-1)
@@ -266,14 +249,15 @@ if __name__ == '__main__':
     #     pass
 
     # dataset = EgoExo_pose(split='train')
-    dataset = EgoExo_atomic(window_sec=5)
-    for idx, data in enumerate(dataset):
-        for key, value in data.items():
-            if type(value) == np.ndarray:
-                print(key, value.shape)
-            else:
-                print(key, value)
-        folder = 'figs'
-        visualize_audio(data['audio'], folder)
-        visualize_imu(data['imu'], folder)
+    dataset = EgoExo_atomic(window_sec=2, modal=['efficientAT'])
+    for idx, data in enumerate(tqdm(dataset)):
+        # for key, value in data.items():
+        #     if type(value) == np.ndarray:
+        #         print(key, value.shape)
+        #     else:
+        #         print(key, value)
+        # folder = 'figs'
+        # visualize_audio(data['audio'], folder)
+        # visualize_imu(data['imu'], folder)
         break
+        # pass

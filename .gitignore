@@ -3,5 +3,6 @@ code/EfficientAT
 code/figs
 *.pyc
 *.pth
+*.pt
 *.json
 events.out.tfevents.*

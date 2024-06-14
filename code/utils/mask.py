@@ -42,8 +42,6 @@ class Preprocess4Mask:
         return data
     def __call__(self, instance):
         instances, mask_pos_indexs, seqs = [], [], []
-        import time
-        t_start = time.time()
         for instance_ in instance:
             instance_mask, mask_pos_index, seq = self.__call__single(instance_)
             instances.append(instance_mask)
