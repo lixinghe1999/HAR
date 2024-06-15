@@ -2,14 +2,15 @@ import numpy as np
 from torch.utils.data import Dataset
 import os
 from extract_imu import get_ego4d_metadata
-from utils import index_narrations, index_moments
+from ego4d_utils import index_narrations, index_moments
 from tqdm import tqdm
 import math
 import string
 import librosa
 import json
 from tqdm import tqdm
-from code.utils.text_cluster import close_to, cluster_plot, cluster_map
+
+from utils.text_cluster import close_to, cluster_plot, cluster_map
 
 def clean_moment_text(narration_text: str) -> list:
     return (
@@ -135,8 +136,8 @@ class Ego4D_Narration(Dataset):
     def __init__(self, folder='', window_sec = 1, modality=['imu', 'audio'], split='train'):
         self.folder = folder
         self.modality = modality
-        self.metadata = get_ego4d_metadata('../dataset/ego4d/v2/annotations/ego4d.json', "video")
-        self.meta_imu = json.load(open('../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
+        self.metadata = get_ego4d_metadata('../../dataset/ego4d/v2/annotations/ego4d.json', "video")
+        self.meta_imu = json.load(open('../../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
         narration_dict, _ = index_narrations()
         narration_dict = filter_by_modality(self.metadata, narration_dict, modality)
         self.window_idx = prepare_narration(narration_dict, self.metadata, self.meta_imu, window_sec)
@@ -164,14 +165,12 @@ class Ego4D_Narration(Dataset):
         dict_out["narration"] = text
         return dict_out
 class Ego4D_Moment(Dataset):
-    def __init__(self, folder='../dataset/ego4d/v2/', window_sec = 1, modality=['imu', 'audio'], split='train'):
+    def __init__(self, folder='../../dataset/ego4d/v2/', window_sec = 1, modality=['imu', 'audio'], split='train'):
         self.folder = folder
         self.modality = modality
-        self.metadata = get_ego4d_metadata('../dataset/ego4d/ego4d.json', "video")
-        self.meta_imu = json.load(open('../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
-        moment_dict_train = index_moments("../dataset/ego4d/v2/annotations/moments_train.json".format(split))
-        moment_dict_val = index_moments("../dataset/ego4d/v2/annotations/moments_train.json".format(split))
-        moment_dict = {**moment_dict_train, **moment_dict_val}
+        self.metadata = get_ego4d_metadata('../../dataset/ego4d/ego4d.json', "video")
+        self.meta_imu = json.load(open('../../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
+        moment_dict = index_moments("../../dataset/ego4d/v2/annotations/moments_{}.json".format(split))
 
         moment_dict = filter_by_modality(self.metadata, moment_dict, modality)
         self.window_idx = prepare_moment(moment_dict, self.metadata, self.meta_imu, window_sec)
@@ -179,51 +178,54 @@ class Ego4D_Moment(Dataset):
 
         self.num_class = None
         if 'raw_label' in modality:
-            self.labels = self.label_dict()
+            self.labels, self.label_count = self.label_dict()
             self.num_class = len(self.labels)
         if 'close_label' in modality:
-            # if os.path.exists('close_label.txt'.format(split)):
-            #     self.labels = json.load(open('close_label.txt'.format(split), 'r'))
-            #     self.num_class = max(self.labels.values()) + 1
-            # else: # do it on-the-fly
-            self.labels = self.label_dict()
-            self.labels, self.num_class = close_to(self.labels, 'close_label.txt'.format(split))
+            self.labels, self.label_count= self.label_dict()
+            self.labels, self.num_class = close_to(self.labels, 'close_{}.txt'.format(split))
         if 'cluster_label' in modality:
-            # if os.path.exists('cluster_label.txt'.format(split)):
-            #     self.labels = json.load(open('cluster_label.txt'.format(split), 'r'))
-            #     self.num_class = max(self.labels.values()) + 1
-            # else:
-            self.labels = self.label_dict()
-            self.labels, self.num_class = cluster_map(self.labels, 'cluster_label.txt'.format(split))
-        if split == 'train':
-            self.window_idx = self.window_idx[:int(len(self.window_idx) * 0.8)]
-        elif split == 'val':
-            self.window_idx = self.window_idx[int(len(self.window_idx) * 0.8):]
+            self.labels, self.label_count = self.label_dict()
+            # self.labels, self.num_class = cluster_map(self.labels, 'cluster_{}.txt'.for))
+    def align_labels(self, labels1, labels2):
+        # only for cluster label
+        labels = {}
+        idx = 0
+        for key in labels1:
+            if key not in labels:
+                labels[key] = idx
+                idx += 1
+        for key in labels2:
+            if key not in labels:
+                labels[key] = idx
+                idx += 1
+        self.labels, self.num_class = cluster_map(labels, 'cluster.txt')
     def __len__(self):
         return len(self.window_idx)
     def label_dict(self):
         label_dict = {}
+        label_count = {}
         durations = 0
         for data in self.window_idx:
             label = data['text']
             duration = data['window_end'] - data['window_start']
             durations += duration
             if label not in label_dict:
-                label_dict[label] = len(label_dict) + 1
+                label_dict[label] = len(label_dict)
+                label_count[label] = 1
             else:
-                label_dict[label] += 1
-        # sort it
-        label_dict = dict(sorted(label_dict.items(), key=lambda item: item[1], reverse=True))
-        # label_dict = {k: i for i, (k, v) in enumerate(label_dict.items())}
-        print(f"Total {durations} seconds of data, average {durations / len(self.window_idx)} seconds per label.")
-        return label_dict       
+                label_count[label] += 1
+        weights = np.array(list(label_count.values()))
+        weights = 1 / weights
+        weights = weights / weights.sum()
+        self.weights = weights.astype(np.float32)
+        self.num_class = len(label_dict)
+        return label_dict, label_count
     def __getitem__(self, i):
         dict_out = self.window_idx[i]
         uid = dict_out["video_uid"]
         w_s = dict_out["window_start"]
         w_e = dict_out["window_end"]
         dict_out['label'] = self.labels[dict_out['text']]
-
         if 'imu' in self.modality:
             imu = np.load(os.path.join(self.folder, 'processed_imu', f"{uid}.npy")).astype(np.float32)
             imu = imu[:, w_s*200:w_e*200]
@@ -233,10 +235,10 @@ class Ego4D_Moment(Dataset):
             dict_out["audio"] = audio
         return dict_out
 class IMU2CLIP_Dataset(Dataset):
-    def __init__(self,  folder='../dataset/ego4d/v2/', window_sec=2.5, modality=['imu', 'audio'], split='train'):
+    def __init__(self,  folder='../../dataset/ego4d/v2/', window_sec=2.5, modality=['imu', 'audio'], split='train'):
         self.folder = folder
-        self.metadata = get_ego4d_metadata('../dataset/ego4d/ego4d.json', "video")
-        self.meta_imu = json.load(open('../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
+        self.metadata = get_ego4d_metadata('../../dataset/ego4d/ego4d.json', "video")
+        self.meta_imu = json.load(open('../../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
         self.moments = self.load_csv('dataset_motion_narr_2.5_{}_0.csv'.format(split))
         self.moment_dict = {}
         self.modality = modality
@@ -245,11 +247,12 @@ class IMU2CLIP_Dataset(Dataset):
                 self.moment_dict[i['video_uid']] = []
             self.moment_dict[i['video_uid']].append([i['label'], int(i['window_start']), int(i['window_end'])])
         self.moment_dict = filter_by_modality(self.metadata, self.moment_dict, modality)
-        print(f"Total {len(self.moment_dict)} windows to process")
+        # print(f"Total {len(self.moment_dict)} windows to process")
         self.window_idx = prepare_moment(self.moment_dict, self.metadata, self.meta_imu, window_sec)
         print(f"Total {len(self.window_idx)} windows to process")
         self.labels =  {"head movement":0, "stands up":1, "sits down":2, "walking":3}
         self.num_class = len(self.labels)
+        self.weights = self.get_weight()
     def load_csv(self, csv_path):
         import csv
         """

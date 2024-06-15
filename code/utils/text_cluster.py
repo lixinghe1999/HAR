@@ -57,7 +57,7 @@ def cluster_map(label_dict, file_name):
 
     dissimilarity = 1 - np.abs(corr)
     hierarchy = linkage(squareform(dissimilarity), method='average')
-    labels = fcluster(hierarchy, 0.7, criterion='distance')
+    labels = fcluster(hierarchy, 0.8, criterion='distance')
 
     for i, label in enumerate(label_dict):
         label_dict[label] = int(labels[i]) - 1

@@ -154,12 +154,10 @@ class Transformer(nn.Module):
         self.pwff = PositionWiseFeedForward(cfg)
         self.norm2 = LayerNorm(cfg)
         # self.drop = nn.Dropout(cfg.p_drop_hidden)
-
     def forward(self, x):
         h = self.embed(x)
-
         for _ in range(self.n_layers):
-            # h = block(h, mask)
+            # h = block(h, mask) 
             h = self.attn(h)
             h = self.norm1(h + self.proj(h))
             h = self.norm2(h + self.pwff(h))

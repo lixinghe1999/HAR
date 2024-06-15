@@ -3,6 +3,7 @@ code/EfficientAT
 code/figs
 *.pyc
 *.pth
+*.pt
 *.json
 LLaVA/playground
 LLaVA/cache

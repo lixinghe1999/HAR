@@ -8,7 +8,7 @@ def main(model, device, num_epochs=1):
     lr = 1e-5
 
     train_dataset = EgoExo_pose(split='train')
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
     
     test_dataset = EgoExo_pose(split='val', max_frames=10000)
 
@@ -40,7 +40,7 @@ def main(model, device, num_epochs=1):
     writer.close()
 
 def test(dataset, model, device, idx):
-    test_loader = torch.utils.data.DataLoader(dataset, batch_size=16, shuffle=False)
+    test_loader = torch.utils.data.DataLoader(dataset, batch_size=16, shuffle=False, num_workers=4)
     test_error = {}
     for joint_name in dataset.joint_names:
         test_error[joint_name] = []
