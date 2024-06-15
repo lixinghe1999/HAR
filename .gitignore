@@ -4,4 +4,7 @@ code/figs
 *.pyc
 *.pth
 *.json
+LLaVA/playground
+LLaVA/cache
+
 events.out.tfevents.*
