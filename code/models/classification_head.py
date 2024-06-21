@@ -29,6 +29,30 @@ class Head(nn.Module):
         """
         return self.head(self.encoder(batch))
 
+class Multimodal_Head(nn.Module):
+    """
+    Add linear layer on top of an encoder.
+    """
+
+    def __init__(self, encoders, size_embeddings, n_classes, classification_head=None):
+        """
+        encoder: IMU or Vision encoder that convert everything into one embeddings.
+        size_embeddings: embedding size.
+        n_classes: number of classes.
+        """
+        super().__init__()
+        self.name = "Head"
+        self.encoder = encoders
+        if classification_head is not None:
+            self.head = classification_head
+        else:
+            self.head = nn.Linear(size_embeddings * len(encoders), n_classes)
+
+    def forward(self, batch):
+        """
+        Forward function
+        """
+        return self.head(self.encoder(batch))
 
 class ZeroShotClassification(nn.Module):
     """

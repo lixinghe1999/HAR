@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import soundfile as sf
 from utils.egoexo_utils import prepare_pose
 from utils.text_cluster import label_dict, cluster_plot, cluster_map, close_to
+import torchvision
 
 class EgoExo_pose(Dataset):
     def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=1, max_frames=1000000, stride=5):
@@ -92,7 +93,7 @@ def parse_skeleton(skeleton, joint_names):
             poses.append([-1,-1,-1]) #not visible
     return poses, flags
 class EgoExo_atomic(Dataset):
-    def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=2, modal=['audio', 'imu', 'efficientAT']):
+    def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=2, modal=['audio', 'imu',]):
         self.data_dir = data_dir
         self.modal = modal
         self.meta = json.load(open(os.path.join(data_dir, 'takes.json')))
@@ -134,6 +135,8 @@ class EgoExo_atomic(Dataset):
         dict_out['text'] = description['text']
 
         take_meta = self.takes_by_uid[take_uid]
+        dict_out['task_name'] = take_meta['task_name']
+        dict_out['parent_task_name'] = take_meta['parent_task_name'] 
         take_path = os.path.join(self.data_dir, take_meta['root_dir'], take_meta['vrs_relative_path'])
         start = description['timestamp'] - self.window_sec/2
 
@@ -149,16 +152,64 @@ class EgoExo_atomic(Dataset):
             imu = imu[:, int(start * 800): int(start * 800) + int(self.window_sec * 800)]
             if imu.shape[1] < self.window_sec * 800:
                 imu = np.pad(imu, ((0, 0), (0, int(self.window_sec * 800 - imu.shape[1]))), 'constant', constant_values=0)
-            dict_out['imu'] = imu[:, ::5].T
-        if 'efficientAT' in self.modal:
-            features_path = os.path.join(self.data_dir, take_meta['root_dir'], 'tags.json').replace('takes', 'processed')
-            tags = json.load(open(features_path))
-            start_index = int(start / 1)
-            end_index = int((start + self.window_sec)/1)
-            tags = tags[start_index:end_index]
-            dict_out['tags'] = tags
-            print(features_path, tags)
+            dict_out['imu'] = imu.T
+        if 'video' in self.modal:
+            video_dir = os.path.join(os.path.dirname(take_path), 'frame_aligned_videos/downscaled/448/')
+            videos = os.listdir(video_dir)
+            for video in videos:
+                if video.endswith('_214-1.mp4'):
+                    video_path = os.path.join(video_dir, video)
+                    # load mid-frame
+                    images, _, _= torchvision.io.read_video(video_path, start_pts=description['timestamp'], 
+                                                       end_pts=description['timestamp'], pts_unit='sec')
+                    dict_out['video'] = images
+                    break
+                    
         return dict_out
+class Baseline_Dataset(Dataset):
+    '''
+    load npy dataset from the folder 'small_dataset'
+    [hhar, motion, shoaib, uci]
+    '''
+    def __init__(self, datasets=['hhar', 'motion', 'shoaib', 'uci'], supervised=False, split='train'):
+        datas, labels = [], []
+        if supervised:
+            assert len(datasets) == 1
+        for data_dir in datasets:
+            data_dir = os.path.join('small_dataset', data_dir)
+            data = np.load(data_dir + '/data_20_120.npy').astype(np.float32)
+            arr = np.arange(data.shape[0])
+            np.random.shuffle(arr)
+            data = data[arr]
+            if data.shape[2] > 6:
+                data = data[:, :, :6]
+            if split == 'train':
+                data = data[:int(0.8 * data.shape[0])]
+            else:
+                data = data[int(0.8 * data.shape[0]):]
+            datas.append(data)
+
+            label = np.load(data_dir + '/label_20_120.npy').astype(np.int64)
+            label = label[:, 0, 0]
+            label = label[arr]
+            if split == 'train':
+                label = label[:int(0.8 * label.shape[0])]
+            else:
+                label = label[int(0.8 * label.shape[0]):]
+            assert data.shape[0] == label.shape[0]            
+            labels.append(label)
+
+        self.data = np.concatenate(datas, axis=0)
+        if supervised:
+            self.labels = np.concatenate(labels, axis=0)
+        self.supervised = supervised
+    def __len__(self):
+        return self.data.shape[0]
+    def __getitem__(self, idx):
+        if self.supervised:
+            return {'imu': self.data[idx], 'label': self.labels[idx]}
+        else:
+            return {'imu': self.data[idx], 'label': None}
 
 def visualize_audio(audio, folder):
     plt.figure()

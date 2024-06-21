@@ -5,4 +5,7 @@ code/figs
 *.pth
 *.pt
 *.json
+*.npy
+*.wav
+*.txt
 events.out.tfevents.*

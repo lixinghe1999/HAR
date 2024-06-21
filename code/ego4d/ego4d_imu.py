@@ -1,7 +1,8 @@
 import sys
 sys.path.append('..')
 
-from models.imu_models import MW2StackRNNPooling, TransformerEncoder
+from models.imu_models import TransformerEncoder
+from models.audio_models import AudioTagging
 from models.classification_head import Head
 from ego_dataset import Ego4D_Moment, Ego4D_Narration, IMU2CLIP_Dataset
 import torch
@@ -62,6 +63,7 @@ def discrimate_train(train_dataset, test_dataset, model, optimizer, device, num_
 
 
 if __name__ == "__main__":
+
     # Define the model
     train_dataset = Ego4D_Moment(window_sec=2.5, modality=['imu', 'cluster_label'], split='train')
     test_dataset = Ego4D_Moment(window_sec=2.5, modality=['imu', 'cluster_label'], split='val')
@@ -71,18 +73,16 @@ if __name__ == "__main__":
     weights = train_dataset.weights
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True, pin_memory=True, num_workers=4)
     
-    
     # dataset = IMU2CLIP_Dataset(window_sec=2.5, modality=['imu'], split='val')
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=False, num_workers=4)
 
     device = 'cuda'
+   
     imu_model = TransformerEncoder(size_embeddings=384)
     imu_model = Head(imu_model, size_embeddings=384, n_classes=train_dataset.num_class)
     imu_model = imu_model.to(device)
-    lr = 4e-5
-    optimizer = torch.optim.Adam(imu_model.parameters(), lr=lr)
-
     model = imu_model
-   
-    # contrastive_train(train_loader, model, optimizer, device)
+
+    lr = 4e-5
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     discrimate_train(train_loader, test_loader, model, optimizer, device)

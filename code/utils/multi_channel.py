@@ -45,7 +45,7 @@ def mel_gccphat(self, audio1, audio2):
 def output_all():
     import multiprocessing
     from tqdm import tqdm
-    data_dir = '../dataset/egoexo/processed'
+    data_dir = '../dataset/egoexo/takes'
     paths = []
     for take_folder in os.listdir(data_dir):
         for take_file in os.listdir(os.path.join(data_dir, take_folder)):
@@ -53,10 +53,11 @@ def output_all():
                 continue
             path = os.path.join(data_dir, take_folder, take_file)
             paths.append(path)
+    paths = paths[:1]
     with multiprocessing.Pool(12) as p:
-      r = list(tqdm(p.imap(MUSIC, paths), total=len(paths)))
-    with multiprocessing.Pool(12) as p:
-        r = list(tqdm(p.imap(pair_representation, paths), total=len(paths)))
+      r = list(tqdm(p.imap(MUSIC_func, paths), total=len(paths)))
+    # with multiprocessing.Pool(12) as p:
+    #     r = list(tqdm(p.imap(pair_representation, paths), total=len(paths)))
     # with multiprocessing.Pool(12) as p:
     #     r = list(tqdm(p.imap(each_representation, paths), total=len(paths)))
 def each_representation(file_path, hop_frame=int(fs * 1), func=gtcc, name='gtcc'):
@@ -96,7 +97,8 @@ def pair_representation(file_path, hop_frame=int(fs * 1), func=gccphat, name='gc
     save_data = np.array(save_data)
     folder = os.path.dirname(file_path)
     np.save(os.path.join(folder, '{}.npy'.format(name)), save_data)
-def MUSIC(file_path, hop_frame=int(fs * 1)):
+def MUSIC_func(file_path, hop_frame=int(fs * 1)):
+    print(file_path)
     audio, _ = librosa.load(file_path, sr=fs, mono=False)
     kwargs = {'L': mic_center + mic_array,
             'fs': fs, 
@@ -104,8 +106,9 @@ def MUSIC(file_path, hop_frame=int(fs * 1)):
             'azimuth': np.deg2rad(np.arange(360)),
             'num_src': 1
     }
-    algo = doa.music.MUSIC(**kwargs)
+    algo = MUSIC(**kwargs)
     predictions = []
+    RMS = []
     n_windows = int(np.ceil(audio.shape[1] / hop_frame))
     for i in range(n_windows):
         start = i * hop_frame
@@ -116,12 +119,44 @@ def MUSIC(file_path, hop_frame=int(fs * 1)):
         stft_signals = stft(data, fs=fs, nperseg=nfft, noverlap=0, boundary=None)[2]
         algo.locate_sources(stft_signals)
         predictions.append(np.rad2deg(algo.azimuth_recon[0]))
+        rms = np.sqrt(np.mean(data**2,))
+        RMS.append(rms)
     predictions = np.array(predictions)
 
     folder = os.path.dirname(file_path)
     np.save(os.path.join(folder, 'music.npy'), predictions)
+    import matplotlib.pyplot as plt
+    plt.subplot(2, 1, 1)
+    plt.plot(predictions)
+    plt.subplot(2, 1, 2)
+    plt.plot(RMS)
+    plt.savefig( 'music.png')
     return predictions
-
+def ssl(audio, hop_frame=int(fs * 1)):
+    kwargs = {'L': mic_center + mic_array,
+            'fs': fs, 
+            'nfft': nfft,
+            'azimuth': np.deg2rad(np.arange(360)),
+            'num_src': 1
+    }
+    audio = librosa.core.resample(audio, orig_sr=48000, target_sr=16000)
+    algo = MUSIC(**kwargs)
+    predictions = []
+    RMS = []
+    n_windows = int(np.ceil(audio.shape[1] / hop_frame))
+    for i in range(n_windows):
+        start = i * hop_frame
+        end = min((i+1) * hop_frame, audio.shape[1])
+        data = audio[:, start:end]
+        if data.shape[1] < hop_frame:
+            data = np.pad(data, ((0, 0), (0, hop_frame - data.shape[1])), mode='constant')
+        stft_signals = stft(data, fs=fs, nperseg=nfft, noverlap=0, boundary=None)[2]
+        algo.locate_sources(stft_signals)
+        predictions.append(np.rad2deg(algo.azimuth_recon[0]))
+        rms = np.sqrt(np.mean(data**2,))
+        RMS.append(rms)
+    predictions = np.array(predictions)
+    return predictions, RMS
 if __name__ == "__main__":
     output_all()
 

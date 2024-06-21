@@ -166,7 +166,7 @@ class Transformer(nn.Module):
 
 class LIMUBertModel4Pretrain(nn.Module):
 
-    def __init__(self, cfg, output_embed=False):
+    def __init__(self, cfg):
         super().__init__()
         self.transformer = Transformer(cfg) # encoder
         self.fc = nn.Linear(cfg['hidden'], cfg['hidden'])
@@ -174,12 +174,11 @@ class LIMUBertModel4Pretrain(nn.Module):
         self.activ = gelu
         self.norm = LayerNorm(cfg)
         self.decoder = nn.Linear(cfg['hidden'], cfg['feature_num'])
-        self.output_embed = output_embed
-
+    def forzen_bert(self):
+        for p in self.transformer.parameters():
+            p.requires_grad = False
     def forward(self, input_seqs, masked_pos=None):
         h_masked = self.transformer(input_seqs)
-        if self.output_embed:
-            return h_masked
         if masked_pos is not None:
             masked_pos = masked_pos[:, :, None].expand(-1, -1, h_masked.size(-1))
             h_masked = torch.gather(h_masked, 1, masked_pos)
@@ -232,22 +231,22 @@ class ClassifierLSTM(nn.Module):
 class ClassifierGRU(nn.Module):
     def __init__(self, cfg, input=None, output=None, feats=False):
         super().__init__()
-        for i in range(cfg.num_rnn):
+        for i in range(cfg['num_rnn']):
             if input is not None and i == 0:
-                self.__setattr__('gru' + str(i), nn.GRU(input, cfg.rnn_io[i][1], num_layers=cfg.num_layers[i], batch_first=True))
+                self.__setattr__('gru' + str(i), nn.GRU(input, cfg['rnn_io'][i][1], num_layers=cfg['num_layers'][i], batch_first=True))
             else:
                 self.__setattr__('gru' + str(i),
-                                 nn.GRU(cfg.rnn_io[i][0], cfg.rnn_io[i][1], num_layers=cfg.num_layers[i],
+                                 nn.GRU(cfg['rnn_io'][i][0], cfg['rnn_io'][i][1], num_layers=cfg['num_layers'][i],
                                          batch_first=True))
-        for i in range(cfg.num_linear):
-            if output is not None and i == cfg.num_linear - 1:
-                self.__setattr__('lin' + str(i), nn.Linear(cfg.linear_io[i][0], output))
+        for i in range(cfg['num_linear'] ):
+            if output is not None and i == cfg['num_linear'] - 1:
+                self.__setattr__('lin' + str(i), nn.Linear(cfg['linear_io'][i][0], output))
             else:
-                self.__setattr__('lin' + str(i), nn.Linear(cfg.linear_io[i][0], cfg.linear_io[i][1]))
-        self.activ = cfg.activ
-        self.dropout = cfg.dropout
-        self.num_rnn = cfg.num_rnn
-        self.num_linear = cfg.num_linear
+                self.__setattr__('lin' + str(i), nn.Linear(cfg['linear_io'][i][0], cfg['linear_io'][i][1]))
+        self.activ = cfg['activ']
+        self.dropout = cfg['dropout']
+        self.num_rnn = cfg['num_rnn']
+        self.num_linear = cfg['num_linear']
 
     def forward(self, input_seqs, training=False):
         h = input_seqs
@@ -410,6 +409,7 @@ class BERTClassifier(nn.Module):
     def forward(self, input_seqs, training=False): #, training
         h = self.transformer(input_seqs)
         h = self.classifier(h, training)
+        # h = self.classifier(input_seqs, training)
         return h
 
     def load_self(self, model_file, map_location=None):
