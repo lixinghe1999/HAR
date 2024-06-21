@@ -7,5 +7,6 @@ code/figs
 *.json
 LLaVA/playground
 LLaVA/cache
+egoexo
 
 events.out.tfevents.*
