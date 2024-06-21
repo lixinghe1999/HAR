@@ -5,7 +5,14 @@ code/figs
 *.pth
 *.pt
 *.json
+<<<<<<< HEAD
 *.npy
 *.wav
 *.txt
+=======
+LLaVA/playground
+LLaVA/cache
+egoexo
+
+>>>>>>> 799bd307e11ad797e0c07de400a1662ff6f71d37
 events.out.tfevents.*
