@@ -9,6 +9,7 @@ code/cache
 *.npy
 *.wav
 *.txt
+*.out
 egoexo
 ego4d
 

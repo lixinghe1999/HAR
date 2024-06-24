@@ -1,8 +1,8 @@
 import numpy as np
 from torch.utils.data import Dataset
 import os
-from extract_imu import get_ego4d_metadata
-from ego4d_utils import index_narrations, index_moments
+from .extract_imu import get_ego4d_metadata
+from .ego4d_utils import index_narrations, index_moments
 from tqdm import tqdm
 import math
 import string
@@ -10,7 +10,7 @@ import librosa
 import json
 from tqdm import tqdm
 
-from utils.text_cluster import close_to, cluster_plot, cluster_map
+from .text_cluster import close_to, cluster_plot, cluster_map
 
 def clean_moment_text(narration_text: str) -> list:
     return (
@@ -28,34 +28,13 @@ def clean_narration_text(narration_text: str) -> str:
         .strip(string.punctuation)
         .lower()[:128]
     )
-def filter_by_modality(metadata, data_dict, modality: list):
-    new_data_dict = {}
-    # binaural_audio_meta = os.listdir('../dataset/ego4d/v2/components/binaural_audio')
-    # print(f"Total {len(binaural_audio_meta)} binaural audio files.")
-    # for b in binaural_audio_meta:
-    #     if b in metadata:
-    #         print(b)
-    #     if b in data_dict:
-    #         print(b)
-    for video_uid, data in data_dict.items():
-        if video_uid not in metadata:
-            continue
-        if "imu" in modality and not metadata[video_uid]["has_imu"]:        
-            continue
-        if "audio" in modality and metadata[video_uid]["video_metadata"]["audio_duration_sec"] is None:
-            continue
-        # if "binaural_audio" in modality and (video_uid + '.wav') not in binaural_audio_meta:
-        #     continue
-        new_data_dict[video_uid] = data
-    return new_data_dict
-def prepare_narration(narration_dict, metadata, meta_imu, window_sec):
+
+def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, window_sec):
     window_idx = []
     for video_uid, narrations in (narration_dict.items()):
-        if not metadata[video_uid]["has_imu"] or not video_uid in meta_imu:
-            continue
-        video_duration = metadata[video_uid]["video_metadata"]["video_duration_sec"]
-        imu_duration = meta_imu[video_uid]
-        duration = min(video_duration, imu_duration) 
+        duration = metadata[video_uid]["video_metadata"]["video_duration_sec"]
+        if 'imu' in modality and metadata[video_uid]["has_imu"]:
+            duration = min(duration, meta_imu[video_uid])
         for (timestamp, text, a_uid, _) in narrations:
             if not "#c" in text.lower(): #only the wearer
                 continue
@@ -133,36 +112,49 @@ def prepare_moment(moment_dict, metadata, meta_imu, window_sec):
     print(f"There are {len(window_idx)} windows to process.")
     return window_idx
 class Ego4D_Narration(Dataset):
-    def __init__(self, folder='', window_sec = 1, modality=['imu', 'audio'], split='train'):
+    def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modality=['imu', 'audio']):
         self.folder = folder
         self.modality = modality
-        self.metadata = get_ego4d_metadata('../../dataset/ego4d/v2/annotations/ego4d.json', "video")
-        self.meta_imu = json.load(open('../../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
-        narration_dict, _ = index_narrations()
-        narration_dict = filter_by_modality(self.metadata, narration_dict, modality)
-        self.window_idx = prepare_narration(narration_dict, self.metadata, self.meta_imu, window_sec)
-        if split == 'train':
-            self.window_idx = self.window_idx[:int(len(self.window_idx) * 0.8)]
-        elif split == 'val':
-            self.window_idx = self.window_idx[int(len(self.window_idx) * 0.8): int(len(self.window_idx) * 0.9)]
+        self.metadata = get_ego4d_metadata('../dataset/ego4d/v2/annotations/ego4d.json', "video")
+        self.meta_imu = json.load(open('../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
+        self.meta_audio = [v[:-4] for v in os.listdir('../dataset/ego4d/v2/audio')]
+        if pre_compute_json is not None:
+            with open(pre_compute_json, 'r') as f:
+                self.window_idx = json.load(f)
         else:
-            self.window_idx = self.window_idx[int(len(self.window_idx) * 0.9):]
+            filter_video_uid = []
+            for video_uid in list(self.metadata.keys()):
+                keep_or_not = False
+                if "imu" in modality:
+                    if self.metadata[video_uid]["has_imu"] and video_uid in self.meta_imu:
+                        keep_or_not = True
+                if "audio" in modality:
+                    if video_uid in self.meta_audio:
+                        keep_or_not = True
+                if keep_or_not:
+                    filter_video_uid.append(video_uid)
+            narration_dict = index_narrations(filter_video_uid)
+            self.window_idx = prepare_narration(narration_dict, self.metadata, self.meta_audio, self.meta_imu, self.modality, window_sec)
+        self.sr_imu = 200
+        self.sr_audio = 16000
     def __len__(self):
-        return len(self.window_idx)       
+        return len(self.window_idx)
+    def save_json(self, filename):
+        with open(filename, 'w') as f:
+            json.dump(self.window_idx, f, indent=4)    
     def __getitem__(self, i):
         dict_out = self.window_idx[i]
         uid = dict_out["video_uid"]
         w_s = dict_out["window_start"]
         w_e = dict_out["window_end"]
-        text = dict_out["text"]
+        dict_out['timestamp'] = (w_s + w_e) / 2
         if 'imu' in self.modality:
             imu = np.load(os.path.join(self.folder, 'processed_imu', f"{uid}.npy")).astype(np.float32)
-            imu = imu[:, w_s*200:w_e*200]
+            imu = imu[:, w_s*self.sr_imu:w_e*self.sr_imu]
             dict_out["imu"] = imu
         if 'audio' in self.modality:
-            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=w_s, duration=w_e-w_s, sr=16000)
+            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=w_s, duration=w_e-w_s, sr=self.sr_audio)
             dict_out["audio"] = audio
-        dict_out["narration"] = text
         return dict_out
 class Ego4D_Moment(Dataset):
     def __init__(self, folder='../../dataset/ego4d/v2/', window_sec = 1, modality=['imu', 'audio'], split='train'):
@@ -292,7 +284,7 @@ class IMU2CLIP_Dataset(Dataset):
 def visualize_data(dict_out):
     import matplotlib.pyplot as plt
     import scipy.io.wavfile as wavfile
-    fig, axs = plt.subplots(4)
+    fig, axs = plt.subplots(1, 4)
     if 'imu' in dict_out:
         print(dict_out['imu'].shape)
         axs[0].plot(dict_out['imu'][:3].T)
@@ -323,13 +315,18 @@ def visualize_class(labels):
     plt.xlim(-1, len(values))
     plt.savefig('ego4d_moment_distribution.pdf')
 if __name__ == '__main__':
-    # dataset = Ego4D_Narration(window_sec=5, modality=['binaural_audio'])
-    # data = dataset[0]
-    # print(data['imu'].shape, data['audio'].shape, print(data['text']))
+    dataset = Ego4D_Narration(window_sec=1, modality=['audio'])
 
-    dataset = Ego4D_Moment(window_sec=2.5, modality=['imu', 'raw_label'], split='train')
-    print(dataset.num_class)
-    visualize_class(dataset.labels)
+    data = dataset[0]
+    print(data['audio'].shape, data['text'], len(dataset))
+
+    dataset = Ego4D_Narration(window_sec=1, modality=['imu'])
+
+    data = dataset[0]
+    print(data['imu'].shape, data['text'], len(dataset))
+    # dataset = Ego4D_Moment(window_sec=2.5, modality=['imu', 'raw_label'], split='train')
+    # print(dataset.num_class)
+    # visualize_class(dataset.labels)
 
     # for data in dataset:
     # # visualize_data(dataset[1200])

@@ -35,7 +35,6 @@ for v in meta['videos']:
         # os.system(command)
         # os.system('rm {}.mp4'.format(os.path.join(video_folder, v['video_uid'])))
 print('audio_video_count:', audio_video_count)
-
 print('imu_video_count:', imu_video_count)
 print('downloaded in folder', len(os.listdir(imu_folder)))
 print('audio_imu_video_count:', audio_imu_video_count)

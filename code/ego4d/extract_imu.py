@@ -77,7 +77,8 @@ def resampleIMU(signal, timestamps, duration):
         sampling_rate = int(1000 * (1 / (np.mean(np.diff(timestamps)))))
     else:
         sampling_rate = 200
-    print(f"SR: {sampling_rate_old}, SR AFTER: {sampling_rate}")
+    # print(f"SR: {sampling_rate_old}, SR AFTER: {sampling_rate}")
+
     # pad_before = int(timestamps[0] / 1000) * 200 # always 0
     # pad_after = int(duration * 200) - signal.shape[1]
     # print(pad_after, signal.shape, timestamps.shape, (timestamps[-1]-timestamps[0])/1000, duration)
@@ -138,12 +139,10 @@ def process_imu_files(video_dir, output_dir):
     for filename in tqdm(glob.glob(f"{video_dir}/*.csv")):
         name_clip = filename.split("/")[-1].replace(".csv", "")
         try:
-            duration = meta_video[name_clip]["video_metadata"][
-                    "video_duration_sec"
-                ]
+            duration = meta_video[name_clip]["video_metadata"]["video_duration_sec"]
             signal, timestamps = load_imu(filename, duration)
             imu_duration = (timestamps[-1]-timestamps[0])/1000
-            print(f"video duration {duration}, IMU duration {imu_duration}s")
+            # print(f"video duration {duration}, IMU duration {imu_duration}s")
             meta_imu[name_clip] = imu_duration
             with open(f"{output_dir}/{name_clip}.npy", "wb") as file:
                 np.save(file, signal)

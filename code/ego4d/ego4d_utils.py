@@ -166,12 +166,14 @@ def index_moments(json_path: str = "../dataset/ego4d/v2/annotations/moments_val.
     print(f"Avg. moment for each video {np.mean(avg_len)}")
     return moment_dict
 
-def index_narrations():
+def index_narrations(keep_vid):
     narration_raw = load_json("../dataset/ego4d/v2/annotations/narration.json")
     narration_dict = defaultdict(list)
-    summary_dict = defaultdict(list)
+    # summary_dict = defaultdict(list)
     avg_len = []
-    for v_id, narr in narration_raw.items():
+    # for v_id, narr in narration_raw.items():
+    for v_id in keep_vid:
+        narr = narration_raw[v_id]    
         narr_list = []
         summ_list = []
         if "narration_pass_1" in narr:
@@ -194,21 +196,18 @@ def index_narrations():
             avg_len.append(len(narration_dict[v_id]))
         else:
             narration_dict[v_id] = []
-        if len(summ_list) > 0:
-            summary_dict[v_id] = [
-                (
-                    float(s_t["start_sec"]),
-                    float(s_t["end_sec"]),
-                    s_t["summary_text"],
-                )
-                for s_t in summ_list
-            ]
-        else:
-            summary_dict[v_id] = []
-    print(f"Number of Videos with narration {len(narration_dict)}")
-    print(f"Avg. narration length {np.mean(avg_len)}")
-    print(f"Number of Videos with summaries {len(summary_dict)}")
-    return narration_dict, summary_dict
+        # if len(summ_list) > 0:
+        #     summary_dict[v_id] = [
+        #         (
+        #             float(s_t["start_sec"]),
+        #             float(s_t["end_sec"]),
+        #             s_t["summary_text"],
+        #         )
+        #         for s_t in summ_list
+        #     ]
+        # else:
+        #     summary_dict[v_id] = []
+    return narration_dict
 
 
 def downsample_video(

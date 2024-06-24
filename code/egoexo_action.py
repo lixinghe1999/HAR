@@ -1,6 +1,6 @@
 from models.egoexo_pose import EgoExo4D_Baseline
 from models.egoexo_motion import EgoExo4D_Motion
-from egoexo_dataset import EgoExo_pose
+from code.egoexo.egoexo_dataset import EgoExo_pose
 import torch
 from tqdm import tqdm
 def main(model, device, num_epochs=1):
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     from torch.utils.tensorboard import SummaryWriter
     from datetime import datetime
     time_now = datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_dir = "logs/" + time_now
+    log_dir = "resources/" + time_now
     ckpt_dir = "ckpts/" + time_now
     writer = SummaryWriter(log_dir=log_dir)
 

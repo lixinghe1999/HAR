@@ -1,4 +1,4 @@
-from egoexo_dataset import EgoExo_atomic
+from code.egoexo.egoexo_dataset import EgoExo_atomic
 from EfficientAT.windowed_inference import EATagger
 from limu_bert import LIMU_BERT_Inferencer
 from utils.multi_channel import ssl
