@@ -114,14 +114,14 @@ class Ego4D_Narration(Dataset):
     def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio']):
         self.folder = folder
         self.modal = modal
-        self.metadata = get_ego4d_metadata('../dataset/ego4d/v2/annotations/ego4d.json', "video")
-        self.meta_imu = json.load(open('../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
-        self.meta_audio = [v[:-4] for v in os.listdir('../dataset/ego4d/v2/audio')]
+        self.metadata = get_ego4d_metadata('../dataset/ego4d/ego4d.json', "video")
         if pre_compute_json is not None:
             self.pre_compute_json = pre_compute_json
             with open(pre_compute_json, 'r') as f:
                 self.window_idx = json.load(f)
         else:
+            self.meta_imu = json.load(open('../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
+            self.meta_audio = [v[:-4] for v in os.listdir('../dataset/ego4d/v2/audio')]
             filter_video_uid = []
             for video_uid in list(self.metadata.keys()):
                 keep_or_not = False
