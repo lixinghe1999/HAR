@@ -1,5 +1,4 @@
 dataset
-code/EfficientAT
 code/figs
 code/cache
 *.pyc
@@ -10,7 +9,5 @@ code/cache
 *.wav
 *.txt
 *.out
-egoexo
-ego4d
 
 events.out.tfevents.*

@@ -64,11 +64,10 @@ def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, 
                 "window_start": w_s,
                 "window_end": w_e,
                 "video_uid": video_uid,
-                "narration_uid": a_uid,
+                # "narration_uid": a_uid,
                 "text": clean_narration_text(text),
             }
             window_idx.append(input_dict)
-    print(f"There are {len(window_idx)} windows to process.")
     return window_idx
 def prepare_moment(moment_dict, metadata, meta_imu, window_sec):
     window_idx = []
@@ -112,47 +111,65 @@ def prepare_moment(moment_dict, metadata, meta_imu, window_sec):
     print(f"There are {len(window_idx)} windows to process.")
     return window_idx
 class Ego4D_Narration(Dataset):
-    def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modality=['imu', 'audio']):
+    def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio']):
         self.folder = folder
-        self.modality = modality
+        self.modal = modal
         self.metadata = get_ego4d_metadata('../dataset/ego4d/v2/annotations/ego4d.json', "video")
         self.meta_imu = json.load(open('../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
         self.meta_audio = [v[:-4] for v in os.listdir('../dataset/ego4d/v2/audio')]
         if pre_compute_json is not None:
+            self.pre_compute_json = pre_compute_json
             with open(pre_compute_json, 'r') as f:
                 self.window_idx = json.load(f)
         else:
             filter_video_uid = []
             for video_uid in list(self.metadata.keys()):
                 keep_or_not = False
-                if "imu" in modality:
+                if "imu" in modal:
                     if self.metadata[video_uid]["has_imu"] and video_uid in self.meta_imu:
                         keep_or_not = True
-                if "audio" in modality:
+                if "audio" in modal:
                     if video_uid in self.meta_audio:
                         keep_or_not = True
                 if keep_or_not:
                     filter_video_uid.append(video_uid)
             narration_dict = index_narrations(filter_video_uid)
-            self.window_idx = prepare_narration(narration_dict, self.metadata, self.meta_audio, self.meta_imu, self.modality, window_sec)
+            self.window_idx = prepare_narration(narration_dict, self.metadata, self.meta_audio, self.meta_imu, self.modal, window_sec)
+        print(f"There are {len(self.window_idx)} windows to process.")
+
         self.sr_imu = 200
         self.sr_audio = 16000
     def __len__(self):
         return len(self.window_idx)
+    def process_item(self, item):
+        data = self.__getitem__(item)
+        RMS = float(np.sqrt(np.mean(data['audio']**2)))
+        return RMS
+    def cal_rms(self):
+        # import matplotlib.pyplot as plt
+        r = []
+        for i in tqdm(range(self.__len__())):
+            data = self.__getitem__(i)
+            RMS = float(np.sqrt(np.mean(data['audio']**2)))
+            self.window_idx[i]['rms'] = RMS
+            r.append(RMS)
+        # plt.hist(r, bins=100)
+        # plt.savefig('figs/rms.png')
+        self.save_json('resources/ego4d_rms.json')
     def save_json(self, filename):
         with open(filename, 'w') as f:
             json.dump(self.window_idx, f, indent=4)    
     def __getitem__(self, i):
-        dict_out = self.window_idx[i]
+        dict_out = self.window_idx[i].copy()
         uid = dict_out["video_uid"]
         w_s = dict_out["window_start"]
         w_e = dict_out["window_end"]
         dict_out['timestamp'] = (w_s + w_e) / 2
-        if 'imu' in self.modality:
+        if 'imu' in self.modal:
             imu = np.load(os.path.join(self.folder, 'processed_imu', f"{uid}.npy")).astype(np.float32)
             imu = imu[:, w_s*self.sr_imu:w_e*self.sr_imu]
             dict_out["imu"] = imu
-        if 'audio' in self.modality:
+        if 'audio' in self.modal:
             audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=w_s, duration=w_e-w_s, sr=self.sr_audio)
             dict_out["audio"] = audio
         return dict_out
