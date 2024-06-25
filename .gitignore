@@ -1,6 +1,7 @@
 dataset
 code/figs
 code/cache
+code/resources
 *.pyc
 *.pth
 *.pt
@@ -9,5 +10,6 @@ code/cache
 *.wav
 *.txt
 *.out
+*.png
 
 events.out.tfevents.*

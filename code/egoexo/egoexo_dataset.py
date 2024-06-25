@@ -178,8 +178,7 @@ class EgoExo_atomic(Dataset):
                 if video.endswith('_214-1.mp4'):
                     video_path = os.path.join(video_dir, video)
                     # load mid-frame
-                    images, _, _= torchvision.io.read_video(video_path, start_pts=description['timestamp'], 
-                                                       end_pts=description['timestamp'], pts_unit='sec')
+                    images, _, _= torchvision.io.read_video(video_path, start_pts=timestamp, end_pts=timestamp, pts_unit='sec')
                     dict_out['video'] = images
                     break
                     

@@ -114,12 +114,12 @@ class Ego4D_Narration(Dataset):
     def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio']):
         self.folder = folder
         self.modal = modal
-        self.metadata = get_ego4d_metadata('../dataset/ego4d/ego4d.json', "video")
         if pre_compute_json is not None:
             self.pre_compute_json = pre_compute_json
             with open(pre_compute_json, 'r') as f:
                 self.window_idx = json.load(f)
         else:
+            self.metadata = get_ego4d_metadata('../dataset/ego4d/ego4d.json', "video")
             self.meta_imu = json.load(open('../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
             self.meta_audio = [v[:-4] for v in os.listdir('../dataset/ego4d/v2/audio')]
             filter_video_uid = []
@@ -141,21 +141,22 @@ class Ego4D_Narration(Dataset):
         self.sr_audio = 16000
     def __len__(self):
         return len(self.window_idx)
-    def process_item(self, item):
-        data = self.__getitem__(item)
-        RMS = float(np.sqrt(np.mean(data['audio']**2)))
-        return RMS
     def cal_rms(self):
-        # import matplotlib.pyplot as plt
         r = []
         for i in tqdm(range(self.__len__())):
             data = self.__getitem__(i)
             RMS = float(np.sqrt(np.mean(data['audio']**2)))
             self.window_idx[i]['rms'] = RMS
             r.append(RMS)
-        # plt.hist(r, bins=100)
-        # plt.savefig('figs/rms.png')
         self.save_json('resources/ego4d_rms.json')
+
+    def audio_tagging(self, audio_model):
+        for i in tqdm(range(self.__len__())):
+            data = self.__getitem__(i)
+            tags, features = audio_model.tag_audio_array(data['audio'], sr=16000)
+            self.window_idx[i]['tags'] = tags[0]['label']
+            self.window_idx[i]['tags_prob'] = tags[0]['probability']
+        self.save_json('resources/ego4d_audiotag.json')
     def save_json(self, filename):
         with open(filename, 'w') as f:
             json.dump(self.window_idx, f, indent=4)    

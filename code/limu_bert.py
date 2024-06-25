@@ -1,5 +1,5 @@
 from models.bert_models import LIMUBertModel4Pretrain, ClassifierGRU, BERTClassifier
-from code.egoexo.egoexo_dataset import Baseline_Dataset
+from utils.limu_bert_dataset import Baseline_Dataset
 import torch
 from tqdm import tqdm
 from utils.mask import Preprocess4Mask
