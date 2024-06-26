@@ -38,25 +38,25 @@ def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, 
         for (timestamp, text, a_uid, _) in narrations:
             if not "#c" in text.lower(): #only the wearer
                 continue
-            if timestamp > duration or window_sec * 2 > duration:
+            if timestamp > duration or window_sec > duration:
                 continue # skip if the timestamp is larger than the duration
             else:
                 # check if it's the timestamp is at the very beginning
-                if timestamp <= window_sec * 2:
+                if timestamp <= window_sec:
                     w_s = 0.0
-                    w_e = window_sec * 2
+                    w_e = window_sec
                 # check if it's the time stamp is at the very end
-                elif timestamp + window_sec * 2 >= duration:
-                    w_s = duration - window_sec * 2
+                elif timestamp + window_sec >= duration:
+                    w_s = duration - window_sec
                     w_e = duration
                 # else get a window of data around the timestamps
                 else:
-                    w_s = timestamp - window_sec
-                    w_e = timestamp + window_sec
+                    w_s = timestamp - window_sec /2 
+                    w_e = timestamp + window_sec /2
             w_s = int(math.floor(w_s))
             w_e = int(math.floor(w_e))
             try:
-                assert w_e - w_s == window_sec * 2
+                assert w_e - w_s == window_sec
             except AssertionError:
                 continue
 
@@ -64,7 +64,6 @@ def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, 
                 "window_start": w_s,
                 "window_end": w_e,
                 "video_uid": video_uid,
-                # "narration_uid": a_uid,
                 "text": clean_narration_text(text),
             }
             window_idx.append(input_dict)
@@ -114,6 +113,7 @@ class Ego4D_Narration(Dataset):
     def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio']):
         self.folder = folder
         self.modal = modal
+        self.window_sec = window_sec
         if pre_compute_json is not None:
             self.pre_compute_json = pre_compute_json
             with open(pre_compute_json, 'r') as f:
@@ -124,13 +124,13 @@ class Ego4D_Narration(Dataset):
             self.meta_audio = [v[:-4] for v in os.listdir('../dataset/ego4d/v2/audio')]
             filter_video_uid = []
             for video_uid in list(self.metadata.keys()):
-                keep_or_not = False
+                keep_or_not = True
                 if "imu" in modal:
-                    if self.metadata[video_uid]["has_imu"] and video_uid in self.meta_imu:
-                        keep_or_not = True
+                    if not self.metadata[video_uid]["has_imu"] and video_uid not in self.meta_imu:
+                        keep_or_not = False
                 if "audio" in modal:
-                    if video_uid in self.meta_audio:
-                        keep_or_not = True
+                    if video_uid not in self.meta_audio:
+                        keep_or_not = False
                 if keep_or_not:
                     filter_video_uid.append(video_uid)
             narration_dict = index_narrations(filter_video_uid)
@@ -149,7 +149,6 @@ class Ego4D_Narration(Dataset):
             self.window_idx[i]['rms'] = RMS
             r.append(RMS)
         self.save_json('resources/ego4d_rms.json')
-
     def audio_tagging(self, audio_model):
         for i in tqdm(range(self.__len__())):
             data = self.__getitem__(i)
@@ -171,7 +170,10 @@ class Ego4D_Narration(Dataset):
             imu = imu[:, w_s*self.sr_imu:w_e*self.sr_imu]
             dict_out["imu"] = imu
         if 'audio' in self.modal:
-            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=w_s, duration=w_e-w_s, sr=self.sr_audio)
+            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
+                                     offset=w_s, duration=w_e-w_s, sr=self.sr_audio)
+            if audio.shape[-1] < self.sr_audio * self.window_sec:
+                audio = np.pad(audio, (0, self.sr_audio * self.window_sec - audio.shape[-1]))
             dict_out["audio"] = audio
         return dict_out
 class Ego4D_Moment(Dataset):
