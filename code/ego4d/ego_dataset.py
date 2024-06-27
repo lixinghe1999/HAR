@@ -170,8 +170,7 @@ class Ego4D_Narration(Dataset):
             imu = imu[:, w_s*self.sr_imu:w_e*self.sr_imu]
             dict_out["imu"] = imu
         if 'audio' in self.modal:
-            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
-                                     offset=w_s, duration=w_e-w_s, sr=self.sr_audio)
+            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=w_s, duration=w_e-w_s, sr=self.sr_audio)
             if audio.shape[-1] < self.sr_audio * self.window_sec:
                 audio = np.pad(audio, (0, self.sr_audio * self.window_sec - audio.shape[-1]))
             dict_out["audio"] = audio

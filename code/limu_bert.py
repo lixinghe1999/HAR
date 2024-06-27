@@ -1,4 +1,4 @@
-from models.bert_models import LIMUBertModel4Pretrain, ClassifierGRU, BERTClassifier
+from models.limu_bert_models import LIMUBertModel4Pretrain, ClassifierGRU, BERTClassifier
 from utils.limu_bert_dataset import Baseline_Dataset
 import torch
 from tqdm import tqdm

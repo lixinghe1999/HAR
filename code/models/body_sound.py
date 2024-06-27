@@ -1,7 +1,12 @@
 import torch.nn as nn
 from models.audio_models import Mobilenet_Encoder
 from models.imu_models import TransformerEncoder
+from transformers import DistilBertTokenizer, DistilBertModel
+from sentence_transformers import SentenceTransformer
+
+
 import torch
+import numpy as np
 class ClipLoss(nn.Module):
     def __init__(
             self,
@@ -30,7 +35,7 @@ class ClipLoss(nn.Module):
         
         return logits_per_image, logits_per_text
 
-    def forward(self, image_features, text_features, logit_scale, output_dict=False):
+    def forward(self, image_features, text_features, logit_scale):
         device = image_features.device
         logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
 
@@ -41,27 +46,50 @@ class ClipLoss(nn.Module):
             nn.functional.cross_entropy(logits_per_text, labels)
         ) / 2
 
-        return {"contrastive_loss": total_loss} if output_dict else total_loss
+        return total_loss
+
+class ClipLoss_match(ClipLoss):
+    def __init__(self, cache_labels=True):
+        super().__init__(cache_labels)
+    
+
 class Body_Sound(nn.Module):
-    def __init__(self, ):
+    '''
+    A model that map audio and imu to the same space, note that we will lose some information
+    '''
+    def __init__(self,):
         super().__init__()
         self.audio_model = Mobilenet_Encoder()
         self.imu_model = TransformerEncoder()
         self.proj_audio = nn.Linear(3840, 384)
-        self.clip_loss = ClipLoss()
+        self.loss = ClipLoss()
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+        for param in self.audio_model.parameters():
+            param.requires_grad = False
     def forward(self, audio, imu):
         audio = self.audio_model(audio)
         audio = self.proj_audio(audio)
         imu = self.imu_model(imu)
         return audio, imu
-    def match_eval(self, audio, imu, logit_scale=1.0):
+
+    def match_eval(self, audio, imu,):
+        '''
+        evaluate the match accuracy, note that the accuracy dependes on batch_size
+        '''
         logit_per_audio = audio @ imu.T
         argmax_per_audio = logit_per_audio.argmax(dim=1)
-        audio_match_accuracy = (argmax_per_audio == torch.arange(len(argmax_per_audio), device=argmax_per_audio.device)).float().mean()
+        audio_match_accuracy = (argmax_per_audio == torch.arange(len(argmax_per_audio), device=argmax_per_audio.device)).float().mean().item()
 
         logit_per_imu = imu @ audio.T
         argmax_per_imu = logit_per_imu.argmax(dim=1)
-        imu_match_accuracy = (argmax_per_imu == torch.arange(len(argmax_per_imu), device=argmax_per_imu.device)).float().mean()
-
+        imu_match_accuracy = (argmax_per_imu == torch.arange(len(argmax_per_imu), device=argmax_per_imu.device)).float().mean().item()
         return audio_match_accuracy, imu_match_accuracy
-    
+    def profile_match(self, audio, imu):
+        '''
+        record the diagonal values of the logit matrix
+        '''
+        logit_per_audio = audio @ imu.T
+        diagonal_values = np.diag(logit_per_audio.cpu().numpy())
+        ratio = diagonal_values/ logit_per_audio.cpu().numpy().max(axis=1)
+        return ratio
