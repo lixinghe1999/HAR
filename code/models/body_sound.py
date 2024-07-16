@@ -48,48 +48,65 @@ class ClipLoss(nn.Module):
 
         return total_loss
 
-class ClipLoss_match(ClipLoss):
-    def __init__(self, cache_labels=True):
-        super().__init__(cache_labels)
-    
-
 class Body_Sound(nn.Module):
     '''
     A model that map audio and imu to the same space, note that we will lose some information
     '''
-    def __init__(self,):
+    def __init__(self, cfg=['context']):
         super().__init__()
-        self.audio_model = Mobilenet_Encoder()
+        self.audio_model = Mobilenet_Encoder('mn10_as')
         self.imu_model = TransformerEncoder()
-        self.proj_audio = nn.Linear(3840, 384)
+        self.proj_audio = nn.Linear(960, 384)
         self.loss = ClipLoss()
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-        for param in self.audio_model.parameters():
+        if 'context' in cfg:
+            self.context_audio_model = Mobilenet_Encoder('mn10_as')
+            self.proj_context = nn.Linear(960, 384)
+            self.context = nn.Linear(768, 91)
+
+    def freeze_body_sound(self):
+        for param in self.proj_audio.parameters():
+            param.requires_grad = False
+        for param in self.imu_model.parameters():
             param.requires_grad = False
     def forward(self, audio, imu):
-        audio = self.audio_model(audio)
-        audio = self.proj_audio(audio)
+        _, audio_feature = self.audio_model(audio)
+        audio = self.proj_audio(audio_feature)
         imu = self.imu_model(imu)
         return audio, imu
+    
+    def forward_context(self, data, train=False, device='cuda'):
+        audio, imu, = data['audio'].to(device), data['imu'].to(device)
+        body_sound_audio, body_sound_imu = self.forward(audio, imu)
+        body_sound = (body_sound_audio + body_sound_imu)/2
 
-    def match_eval(self, audio, imu,):
+        scenario = data['scenario'].to(device)
+        _, context_feature = self.context_audio_model(audio)
+        context_feature = self.proj_context(context_feature)
+
+        feature = torch.cat([body_sound, context_feature], dim=1)
+        context_pred = self.context(feature)
+
+        if train:
+            loss = nn.functional.binary_cross_entropy_with_logits(context_pred, scenario)
+            return loss
+        else:
+            return context_pred, scenario
+    def match_eval(self, audio, imu, return_index=False):
         '''
         evaluate the match accuracy, note that the accuracy dependes on batch_size
         '''
         logit_per_audio = audio @ imu.T
         argmax_per_audio = logit_per_audio.argmax(dim=1)
-        audio_match_accuracy = (argmax_per_audio == torch.arange(len(argmax_per_audio), device=argmax_per_audio.device)).float().mean().item()
+        audio_match_mask = (argmax_per_audio == torch.arange(len(argmax_per_audio), device=argmax_per_audio.device))
+        audio_match_acc = audio_match_mask.float().mean().item()
 
         logit_per_imu = imu @ audio.T
         argmax_per_imu = logit_per_imu.argmax(dim=1)
-        imu_match_accuracy = (argmax_per_imu == torch.arange(len(argmax_per_imu), device=argmax_per_imu.device)).float().mean().item()
-        return audio_match_accuracy, imu_match_accuracy
-    def profile_match(self, audio, imu):
-        '''
-        record the diagonal values of the logit matrix
-        '''
-        logit_per_audio = audio @ imu.T
-        diagonal_values = np.diag(logit_per_audio.cpu().numpy())
-        ratio = diagonal_values/ logit_per_audio.cpu().numpy().max(axis=1)
-        return ratio
+        imu_match_mask = (argmax_per_imu == torch.arange(len(argmax_per_imu), device=argmax_per_imu.device))
+        imu_match_acc = imu_match_mask.float().mean().item()
+        if return_index:
+            return audio_match_acc, imu_match_acc, audio_match_mask, imu_match_mask
+        else:
+            return audio_match_acc, imu_match_acc

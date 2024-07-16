@@ -5,6 +5,7 @@ from tqdm import tqdm
 from utils.mask import Preprocess4Mask
 import torchmetrics
 import json
+import numpy as np
 
 def main(model, device, num_epochs):
     batch_size = 32
@@ -123,16 +124,21 @@ def save_embedding(data_dir, model, device, hop_frame=800):
 
 class LIMU_BERT_Inferencer():
     def __init__(self, ckpt, device, class_name = ["walking", "upstairs", "downstairs", "sitting", "standing", "lying"]):
-        model_cfg = json.load(open('models/limu_bert.json', 'r'))['base_v1']
-        classifier_cfg = json.load(open('models/classifier.json', 'r'))['gru_v1']
+        model_cfg = json.load(open('models/limu_bert_config/limu_bert.json', 'r'))['base_v1']
+        classifier_cfg = json.load(open('models/limu_bert_config/classifier.json', 'r'))['gru_v1']
         self.model = BERTClassifier(model_cfg, classifier = ClassifierGRU(classifier_cfg, input=72, output=len(class_name))).to(device)
         self.model.load_state_dict(torch.load(ckpt), strict=False)
         self.device = device
         self.class_name = class_name
-        print('warning, the unit for accelerometer should be m/sec^2')
+        # print('warning, the unit for accelerometer should be m/sec^2')
     def infer(self, imu, sr=800):
+        imu = imu.T
         down_sample_rate = sr // 20
         imu = imu[::down_sample_rate]
+        mid_idx = imu.shape[0] // 2
+        imu = imu[mid_idx-60:mid_idx+60]
+        if imu.shape[0] != 120:
+            imu = np.pad(imu, ((120-imu.shape[0], 0), (0, 0)), 'constant', constant_values=0)
         if imu.shape[-1] == 9:
             imu = imu[None, :, :6]
         elif imu.shape[-1] == 12:

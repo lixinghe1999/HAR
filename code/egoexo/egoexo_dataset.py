@@ -4,8 +4,10 @@ import os
 import json
 import matplotlib.pyplot as plt
 import soundfile as sf
+import librosa
 from .egoexo_utils import prepare_pose
 import torchvision
+from tqdm import tqdm
 
 class EgoExo_pose(Dataset):
     def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=1, max_frames=1000000, stride=5):
@@ -91,29 +93,29 @@ def parse_skeleton(skeleton, joint_names):
             flags.append(0) #not visible
             poses.append([-1,-1,-1]) #not visible
     return poses, flags
+
 class EgoExo_atomic(Dataset):
-    def __init__(self, pre_compute_json=None, data_dir='../dataset/egoexo/', 
+    def __init__(self, pre_compute_json=None, folder='../dataset/egoexo/', 
                  split='train', window_sec=2, modal=['audio', 'imu',]):
         '''
         pre_compute_json: str, path to pre-computed json file (by self.save_json)
-        data_dir: str, path to the dataset directory
+        folder: str, path to the dataset directory
         split: str, 'train' or 'val'
         window_sec: int, window size in seconds
         modal: list, ['audio', 'imu', 'video']
         '''
-        self.data_dir = data_dir
+        self.folder = folder
         self.modal = modal
-        self.meta = json.load(open(os.path.join(data_dir, 'takes.json')))
+        self.meta = json.load(open(os.path.join(folder, 'takes.json')))
         self.takes_by_uid = {x["take_uid"]: x for x in self.meta}
         self.window_sec = window_sec
         if pre_compute_json is not None:
-            self.all_descriptions = json.load(open(pre_compute_json))
+            self.window_idx = json.load(open(pre_compute_json))
         else:
-            # print('Total number of takes:', len(self.takes_by_uid))
-            self.annotation_dir = os.path.join(data_dir, 'annotations')
+            self.annotation_dir = os.path.join(folder, 'annotations')
             self.atomic = os.path.join(self.annotation_dir, 'atomic_descriptions_{}.json'.format(split))
             self.atomic = json.load(open(self.atomic))['annotations']
-            self.all_descriptions = []
+            self.window_idx = []
             for take_uid, xs in self.atomic.items():
                 '''make sure the file exist'''
                 if take_uid not in self.takes_by_uid:
@@ -121,7 +123,8 @@ class EgoExo_atomic(Dataset):
                 take_meta = self.takes_by_uid[take_uid]
                 if take_meta['vrs_relative_path'] == None:
                     continue
-                take_path = os.path.join(self.data_dir, take_meta['root_dir'], take_meta['vrs_relative_path'])
+                take_path = os.path.join(self.folder, take_meta['root_dir'], take_meta['vrs_relative_path']
+                                         .replace('.vrs', '.flac'))
                 if not os.path.exists(take_path):
                     continue
                 for x in xs:
@@ -130,58 +133,99 @@ class EgoExo_atomic(Dataset):
                     descriptions = x['descriptions']
                     for description in descriptions:
                         description['take_uid'] = take_uid
-                        self.all_descriptions.append(description)
-        print('Total number of atomic descriptions:', len(self.all_descriptions))
+                        self.window_idx.append(description)
+        self.sr_imu = 200
+        self.sr_audio = 16000
+        print('Total number of atomic descriptions:', len(self.window_idx))
     def __len__(self):
-        return len(self.all_descriptions)
-    def save_json(self, fname):
-        json.dump(self.all_descriptions, open(fname, 'w'), indent=4)
-    def prune_silence(self):
-        RMS_List = []
-        for i in self.__len__():
-            data = self.__getitem__(i)
-            RMS = np.sqrt(np.mean(data['audio'][0]**2))
-            RMS_List.append(RMS)
-        return RMS_List
-    def __getitem__(self, idx):
-        dict_out = self.all_descriptions[idx]
-        take_meta = self.takes_by_uid[dict_out['take_uid']]
+        return len(self.window_idx)
+    def split_with_scenario(self, ratio=0.8):
+        train_idx = []
+        test_idx = []
+        scenario_idx = {}
+        for i, data in enumerate(self.window_idx):
+            scenario = data['task_name']
+            if scenario not in scenario_idx:
+                scenario_idx[scenario] = []
+            scenario_idx[scenario].append(i)
+            self.window_idx[i]['scenario'] = list(scenario_idx.keys()).index(scenario)
+        
+        for scenario, idx in scenario_idx.items():
+            train_size = int(len(idx) * ratio)
+            train_idx += idx[:train_size]
+            test_idx += idx[train_size:]
 
-        text = dict_out['text'].replace('C ', 'The user ')
-        timestamp = dict_out['timestamp']
-        dict_out['timestamp'] = timestamp
-        dict_out['text'] = text
+        return train_idx, test_idx
+    def negative(self):
+        new_all_descriptions = []
+        for i in tqdm(range(len(self.window_idx) - 1)):
+            take_uid1 = self.window_idx[i]['take_uid']
+            time_stamp1 = self.window_idx[i]['timestamp']
+            if take_uid1 == self.window_idx[i + 1]['take_uid']: # still on the same take
+                time_stamp2 = self.window_idx[i + 1]['timestamp']
+                new_descrption = self.window_idx[i].copy()
+                new_descrption['text'] = 'unsure'
+                del new_descrption['sound']
+                for timestamp in np.arange(time_stamp1 + self.window_sec/2, time_stamp2 - self.window_sec/2, self.window_sec):
+                    new_descrption['timestamp'] = timestamp
+                    new_all_descriptions.append(new_descrption)
+        self.window_idx = new_all_descriptions
+        print('Total number of Negative samples', len(self.window_idx))
+    def prune_slience(self, fname='resources/egoexo_atomic_prune.json'):
+        new_all_descriptions = []
+        pruned, kept = 0, 0
+        for i in tqdm(range(0, self.__len__())):
+            data = self.__getitem__(i)
+            audio = data['audio']
+            valid_audio = librosa.effects.split(y=audio[0], top_db=20, ref=1)
+            if len(valid_audio) == 0: # no sound
+                pruned += 1
+            else:
+                new_all_descriptions.append(self.window_idx[i])
+                kept += 1
+        print('Pruned:', pruned, 'Kept:', kept)
+        self.window_idx = new_all_descriptions
+        self.save_json(fname)
+    def save_json(self, fname):
+        json.dump(self.window_idx, open(fname, 'w'), indent=4)
+    def add(self, idx, key, value):
+        self.window_idx[idx][key] = value
+    def __getitem__(self, idx):
+        dict_out = self.window_idx[idx].copy()
+        take_meta = self.takes_by_uid[dict_out['take_uid']]
         dict_out['root_dir'] = take_meta['root_dir']
 
         dict_out['task_name'] = take_meta['task_name']
         dict_out['parent_task_name'] = take_meta['parent_task_name'] 
 
-        take_path = os.path.join(self.data_dir, take_meta['root_dir'], take_meta['vrs_relative_path'])
+        take_path = os.path.join(self.folder, take_meta['root_dir'], take_meta['vrs_relative_path'][:-4])
         start = dict_out['timestamp'] - self.window_sec/2
         if 'audio' in self.modal:
-            audio_path = take_path.replace('.vrs', '.flac')
-            audio = sf.read(audio_path, start=int(start*48000), stop=int(start*48000) + int(self.window_sec * 48000))[0].T
-            if audio.shape[1] < self.window_sec * 48000:
-                audio = np.pad(audio, ((0, 0), (0, int(self.window_sec * 48000 - audio.shape[1]))), 'constant', constant_values=0)
+            dict_out['audio_path'] = take_path + '.flac'
+            audio = librosa.load(dict_out['audio_path'], sr=self.sr_audio, mono=False, offset=start, duration=self.window_sec)[0]
+            if len(audio.shape) == 1: # some may only one channel
+                audio = np.expand_dims(audio, axis=0)
+            if audio.shape[1] < self.window_sec * self.sr_audio:
+                audio = np.pad(audio, ((0, 0), (0, int(self.window_sec * self.sr_audio - audio.shape[1]))), 'constant', constant_values=0)
             dict_out['audio'] = audio
         if 'imu' in self.modal:
-            imu_path = take_path.replace('.vrs', '.npy')
-            imu = np.load(imu_path).astype(np.float32)
-            imu = imu[:, int(start * 800): int(start * 800) + int(self.window_sec * 800)]
-            if imu.shape[1] < self.window_sec * 800:
-                imu = np.pad(imu, ((0, 0), (0, int(self.window_sec * 800 - imu.shape[1]))), 'constant', constant_values=0)
-            dict_out['imu'] = imu.T
+            down_sample_factor = 800 // self.sr_imu
+            dict_out['imu_path'] = take_path + '.npy'
+            imu = np.load(dict_out['imu_path']).astype(np.float32)[:, ::down_sample_factor]
+            imu = imu[:6, int(start * self.sr_imu): int(start * self.sr_imu) + int(self.window_sec * self.sr_imu)]
+            if imu.shape[1] < self.window_sec * self.sr_imu:
+                imu = np.pad(imu, ((0, 0), (0, int(self.window_sec * self.sr_imu - imu.shape[1]))), 'constant', constant_values=0)
+            dict_out['imu'] = imu
         if 'video' in self.modal:
             video_dir = os.path.join(os.path.dirname(take_path), 'frame_aligned_videos/downscaled/448/')
             videos = os.listdir(video_dir)
             for video in videos:
                 if video.endswith('_214-1.mp4'):
-                    video_path = os.path.join(video_dir, video)
-                    # load mid-frame
-                    images, _, _= torchvision.io.read_video(video_path, start_pts=timestamp, end_pts=timestamp, pts_unit='sec')
+                    dict_out['video_path'] = os.path.join(video_dir, video)
+                    images, _, _= torchvision.io.read_video(dict_out['video_path'], 
+                                                            start_pts=timestamp, end_pts=timestamp, pts_unit='sec', output_format='TCHW')
                     dict_out['video'] = images
-                    break
-                    
+                    break           
         return dict_out
 
 
@@ -255,7 +299,6 @@ def overlap_pose_atomic():
             both_files.append(atomic_file)
     print('Total number of atomic descriptions:', len(atomic_files), 'Total number of poses:', len(pose_files), 'Total number of both:', len(both_files))
 if __name__ == '__main__':
-    from tqdm import tqdm
     # overlap_pose_atomic()
     # dataset = EgoExo_pose(split='train')
     # idx = random.randint(0, len(dataset)-1)

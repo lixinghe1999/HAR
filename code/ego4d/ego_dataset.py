@@ -7,39 +7,29 @@ from tqdm import tqdm
 import math
 import string
 import librosa
+import soundfile as sf
 import json
 from tqdm import tqdm
 
 from .text_cluster import close_to, cluster_plot, cluster_map
-
-def clean_moment_text(narration_text: str) -> list:
-    return (
-        narration_text.replace("_", " ")
-        .strip()
-        .strip(string.punctuation)
-        .lower()[:128]
-    )
-def clean_narration_text(narration_text: str) -> str:
-    return (
-        narration_text.replace("#C C ", "")
-        .replace("#C", "")
-        .replace("#unsure", "something")
-        .strip()
-        .strip(string.punctuation)
-        .lower()[:128]
-    )
+import time
 
 def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, window_sec):
     window_idx = []
-    for video_uid, narrations in (narration_dict.items()):
+    scenario_map = {}
+    for video_uid, narrations in tqdm(narration_dict.items()):
         duration = metadata[video_uid]["video_metadata"]["video_duration_sec"]
         if 'imu' in modality and metadata[video_uid]["has_imu"]:
             duration = min(duration, meta_imu[video_uid])
+        for scenario in metadata[video_uid]["scenarios"]:
+            if scenario not in scenario_map:
+                scenario_map[scenario] = len(scenario_map)
+        _scenario = [scenario_map[scenario] for scenario in metadata[video_uid]["scenarios"]]
         for (timestamp, text, a_uid, _) in narrations:
-            if not "#c" in text.lower(): #only the wearer
-                continue
             if timestamp > duration or window_sec > duration:
                 continue # skip if the timestamp is larger than the duration
+            elif '#c' not in text.lower():
+                continue
             else:
                 # check if it's the timestamp is at the very beginning
                 if timestamp <= window_sec:
@@ -59,55 +49,31 @@ def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, 
                 assert w_e - w_s == window_sec
             except AssertionError:
                 continue
-
+            # sub_map = {"#o":0, "#c":1, "#unsure":2}
+            # subject = 2
+            # for i, sub in enumerate(sub_map.keys()):
+            #     if sub in text.lower():
+            #         subject = sub_map[sub]
             input_dict = {
+                # "timestamp": (w_s + w_e)/2,
                 "window_start": w_s,
                 "window_end": w_e,
                 "video_uid": video_uid,
-                "text": clean_narration_text(text),
+                "text": text
+                        .replace("#C C ", "")
+                        .replace("#C", "")
+                        .replace("#O", "")
+                        .replace("#unsure", "")
+                        .strip()
+                        .strip(string.punctuation)
+                        .lower()[:128]
+                        ,
+                # "subject": subject,
+                "scenario": _scenario,
+                # "scenario_name": metadata[video_uid]["scenarios"]
             }
             window_idx.append(input_dict)
-    return window_idx
-def prepare_moment(moment_dict, metadata, meta_imu, window_sec):
-    window_idx = []
-    for video_uid, moments in tqdm(moment_dict.items()):
-        if not metadata[video_uid]["has_imu"]:
-            continue
-        video_duration = metadata[video_uid]["video_metadata"]["video_duration_sec"]
-        imu_duration = meta_imu[video_uid]
-        duration = min(video_duration, imu_duration) # imu duration may be smaller the video duration
-        # print(video_uid, video_duration, imu_duration)
-        for (label, start_time, end_time) in moments:
-            timestamp = (start_time + end_time) / 2
-            if timestamp > duration:
-                continue # skip if the timestamp is larger than the duration
-            else:
-                if timestamp <= window_sec * 2:
-                    w_s = 0.0
-                    w_e = window_sec * 2
-                # check if it's the time stamp is at the very end
-                elif timestamp + window_sec * 2 >= duration:
-                    w_s = duration - window_sec * 2
-                    w_e = duration
-                # else get a window of data around the timestamps
-                else:
-                    w_s = timestamp - window_sec
-                    w_e = timestamp + window_sec
-            w_s = int(math.floor(w_s))
-            w_e = int(math.floor(w_e))
-            try:
-                assert w_e - w_s == window_sec * 2
-            except AssertionError:
-                continue
-            label = clean_moment_text(label)
-            input_dict = {
-                "window_start": w_s,
-                "window_end": w_e,
-                "video_uid": video_uid,
-                "text": label,
-            }
-            window_idx.append(input_dict)
-    print(f"There are {len(window_idx)} windows to process.")
+    print('Number of Scenario', len(scenario_map))
     return window_idx
 class Ego4D_Narration(Dataset):
     def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio']):
@@ -119,131 +85,88 @@ class Ego4D_Narration(Dataset):
             with open(pre_compute_json, 'r') as f:
                 self.window_idx = json.load(f)
         else:
-            self.metadata = get_ego4d_metadata('../dataset/ego4d/ego4d.json', "video")
-            self.meta_imu = json.load(open('../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
-            self.meta_audio = [v[:-4] for v in os.listdir('../dataset/ego4d/v2/audio')]
+            metadata = get_ego4d_metadata(os.path.join(self.folder, "ego4d.json"), "video")
+            meta_imu = json.load(open(os.path.join(self.folder, "annotations/meta_imu.json"), 'r'))
+            meta_audio = [v[:-4] for v in os.listdir(os.path.join(self.folder, "audio"))]
             filter_video_uid = []
-            for video_uid in list(self.metadata.keys()):
+            for video_uid in list(metadata.keys()):
                 keep_or_not = True
                 if "imu" in modal:
-                    if not self.metadata[video_uid]["has_imu"] and video_uid not in self.meta_imu:
+                    if not metadata[video_uid]["has_imu"] and video_uid not in meta_imu:
                         keep_or_not = False
                 if "audio" in modal:
-                    if video_uid not in self.meta_audio:
+                    if video_uid not in meta_audio:
                         keep_or_not = False
                 if keep_or_not:
                     filter_video_uid.append(video_uid)
-            narration_dict = index_narrations(filter_video_uid)
-            self.window_idx = prepare_narration(narration_dict, self.metadata, self.meta_audio, self.meta_imu, self.modal, window_sec)
+            narration_dict = index_narrations(os.path.join(self.folder, "annotations/narration.json"), filter_video_uid)
+            self.window_idx = prepare_narration(narration_dict, metadata, meta_audio, meta_imu, self.modal, window_sec)
         print(f"There are {len(self.window_idx)} windows to process.")
-
+        # self.subject_weight = self.get_class_weight('subject')
+        # self.scenario_weight = self.get_class_weight('scenario')
         self.sr_imu = 200
         self.sr_audio = 16000
+    def get_class_weight(self, key):
+        label_count = {}
+        for data in self.window_idx:
+            label = data[key]
+            if label not in label_count:
+                label_count[label] = 1
+            else:
+                label_count[label] += 1
+        label_count = [k/sum(label_count.values()) for k in label_count.values()]
+        self.class_weight = label_count
     def __len__(self):
         return len(self.window_idx)
-    def cal_rms(self):
-        r = []
-        for i in tqdm(range(self.__len__())):
-            data = self.__getitem__(i)
-            RMS = float(np.sqrt(np.mean(data['audio']**2)))
-            self.window_idx[i]['rms'] = RMS
-            r.append(RMS)
-        self.save_json('resources/ego4d_rms.json')
-    def audio_tagging(self, audio_model):
-        for i in tqdm(range(self.__len__())):
-            data = self.__getitem__(i)
-            tags, features = audio_model.tag_audio_array(data['audio'], sr=16000)
-            self.window_idx[i]['tags'] = tags[0]['label']
-            self.window_idx[i]['tags_prob'] = tags[0]['probability']
-        self.save_json('resources/ego4d_audiotag.json')
     def save_json(self, filename):
         with open(filename, 'w') as f:
             json.dump(self.window_idx, f, indent=4)    
+    def add(self, idx, key, value):
+        self.window_idx[idx][key] = value
+
+    def split_with_scenario(self, ratio = 0.8):
+        train_idx = []
+        test_idx = []
+        scenario_idx = {}
+        for i, data in enumerate(self.window_idx):
+            for scenario in data['scenario']:
+                if scenario not in scenario_idx:
+                    scenario_idx[scenario] = []
+                scenario_idx[scenario].append(i)
+        
+        for scenario, idx in scenario_idx.items():
+            train_size = int(len(idx) * ratio)
+            train_idx += idx[:train_size]
+            test_idx += idx[train_size:]
+        return train_idx, test_idx
+    
     def __getitem__(self, i):
         dict_out = self.window_idx[i].copy()
         uid = dict_out["video_uid"]
         w_s = dict_out["window_start"]
         w_e = dict_out["window_end"]
         dict_out['timestamp'] = (w_s + w_e) / 2
+
+        scenario_vec = np.zeros(91, dtype=float)
+        scenario_vec[dict_out['scenario']] = 1
+        dict_out['scenario'] = scenario_vec
         if 'imu' in self.modal:
             imu = np.load(os.path.join(self.folder, 'processed_imu', f"{uid}.npy")).astype(np.float32)
             imu = imu[:, w_s*self.sr_imu:w_e*self.sr_imu]
             dict_out["imu"] = imu
         if 'audio' in self.modal:
-            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=w_s, duration=w_e-w_s, sr=self.sr_audio)
+            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
+                                     offset=w_s, duration=self.window_sec, sr=self.sr_audio)
             if audio.shape[-1] < self.sr_audio * self.window_sec:
                 audio = np.pad(audio, (0, self.sr_audio * self.window_sec - audio.shape[-1]))
             dict_out["audio"] = audio
-        return dict_out
-class Ego4D_Moment(Dataset):
-    def __init__(self, folder='../../dataset/ego4d/v2/', window_sec = 1, modality=['imu', 'audio'], split='train'):
-        self.folder = folder
-        self.modality = modality
-        self.metadata = get_ego4d_metadata('../../dataset/ego4d/ego4d.json', "video")
-        self.meta_imu = json.load(open('../../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
-        moment_dict = index_moments("../../dataset/ego4d/v2/annotations/moments_{}.json".format(split))
-
-        moment_dict = filter_by_modality(self.metadata, moment_dict, modality)
-        self.window_idx = prepare_moment(moment_dict, self.metadata, self.meta_imu, window_sec)
-        print(f"Total {len(self.window_idx)} windows to process")
-
-        self.num_class = None
-        if 'raw_label' in modality:
-            self.labels, self.label_count = self.label_dict()
-            self.num_class = len(self.labels)
-        if 'close_label' in modality:
-            self.labels, self.label_count= self.label_dict()
-            self.labels, self.num_class = close_to(self.labels, 'close_{}.txt'.format(split))
-        if 'cluster_label' in modality:
-            self.labels, self.label_count = self.label_dict()
-            # self.labels, self.num_class = cluster_map(self.labels, 'cluster_{}.txt'.for))
-    def align_labels(self, labels1, labels2):
-        # only for cluster label
-        labels = {}
-        idx = 0
-        for key in labels1:
-            if key not in labels:
-                labels[key] = idx
-                idx += 1
-        for key in labels2:
-            if key not in labels:
-                labels[key] = idx
-                idx += 1
-        self.labels, self.num_class = cluster_map(labels, 'cluster.txt')
-    def __len__(self):
-        return len(self.window_idx)
-    def label_dict(self):
-        label_dict = {}
-        label_count = {}
-        durations = 0
-        for data in self.window_idx:
-            label = data['text']
-            duration = data['window_end'] - data['window_start']
-            durations += duration
-            if label not in label_dict:
-                label_dict[label] = len(label_dict)
-                label_count[label] = 1
-            else:
-                label_count[label] += 1
-        weights = np.array(list(label_count.values()))
-        weights = 1 / weights
-        weights = weights / weights.sum()
-        self.weights = weights.astype(np.float32)
-        self.num_class = len(label_dict)
-        return label_dict, label_count
-    def __getitem__(self, i):
-        dict_out = self.window_idx[i]
-        uid = dict_out["video_uid"]
-        w_s = dict_out["window_start"]
-        w_e = dict_out["window_end"]
-        dict_out['label'] = self.labels[dict_out['text']]
-        if 'imu' in self.modality:
-            imu = np.load(os.path.join(self.folder, 'processed_imu', f"{uid}.npy")).astype(np.float32)
-            imu = imu[:, w_s*200:w_e*200]
-            dict_out["imu"] = imu
-        if 'audio' in self.modality:
-            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=w_s, duration=w_e-w_s, sr=16000)
-            dict_out["audio"] = audio
+        if 'context_audio' in self.modal:
+            context_length = 2
+            offset = max(np.random.randint(-context_length, context_length) + w_s, 0)
+            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=offset, duration=context_length, sr=self.sr_audio)
+            if audio.shape[-1] < self.sr_audio * context_length:
+                audio = np.pad(audio, (0, self.sr_audio * context_length - audio.shape[-1]))
+            dict_out["context_audio"] = audio
         return dict_out
 class IMU2CLIP_Dataset(Dataset):
     def __init__(self,  folder='../../dataset/ego4d/v2/', window_sec=2.5, modality=['imu', 'audio'], split='train'):
@@ -334,25 +257,8 @@ def visualize_class(labels):
     plt.xlim(-1, len(values))
     plt.savefig('ego4d_moment_distribution.pdf')
 if __name__ == '__main__':
-    dataset = Ego4D_Narration(window_sec=1, modality=['audio'])
-
-    data = dataset[0]
-    print(data['audio'].shape, data['text'], len(dataset))
-
-    dataset = Ego4D_Narration(window_sec=1, modality=['imu'])
-
-    data = dataset[0]
-    print(data['imu'].shape, data['text'], len(dataset))
-    # dataset = Ego4D_Moment(window_sec=2.5, modality=['imu', 'raw_label'], split='train')
-    # print(dataset.num_class)
-    # visualize_class(dataset.labels)
-
-    # for data in dataset:
-    # # visualize_data(dataset[1200])
-    #     print(data['label'])
-    # label_dict = dataset.label_dict()
-    # print(label_dict)
-    # dataset = IMU2CLIP_Dataset()
-    # for data in dataset:
-    #     print(data['label'], data['imu'].shape)
+    dataset = Ego4D_Narration(window_sec=1, folder='../../dataset/ego4d/v2/', modal=['audio', 'imu'])
+    for i in range(10):
+        data = dataset[i]
+        print(data['audio'].shape, data['imu'].shape, data['text'], len(dataset))
 

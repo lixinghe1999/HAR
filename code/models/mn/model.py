@@ -261,8 +261,22 @@ class MN(nn.Module):
         else:
             return x, features
 
-    def forward(self, x: Tensor) -> Union[Tuple[Tensor, Tensor], Tuple[Tensor, List[Tensor]]]:
-        return self._forward_impl(x)
+    def forward(self, x: Tensor, return_fmaps: bool = False) -> Union[Tuple[Tensor, Tensor], Tuple[Tensor, List[Tensor]]]:
+        # DON'T RUN classifier
+        fmaps = []
+        for i, layer in enumerate(self.features):
+            x = layer(x)
+            if return_fmaps:
+                fmaps.append(x)
+        
+        features = F.adaptive_avg_pool2d(x, (1, 1)).squeeze()
+        if features.dim() == 1 and x.dim() == 1:
+            # squeezed batch dimension
+            features = features.unsqueeze(0)
+        if return_fmaps:
+            return x, fmaps[-1]
+        else:
+            return x, features
 
 
 def _mobilenet_v3_conf(

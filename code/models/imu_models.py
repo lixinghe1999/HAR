@@ -27,7 +27,7 @@ class Embeddings(nn.Module):
         return self.norm(e)
     
 class TransformerEncoder(torch.nn.Module):
-    def __init__(self, in_channels=6, size_embeddings=384):
+    def __init__(self, in_channels=6, size_embeddings=384, num_layers=4):
         super().__init__()
         self.name = TransformerEncoder
         self.norm = torch.nn.GroupNorm(2, 6)
@@ -37,10 +37,8 @@ class TransformerEncoder(torch.nn.Module):
                 kernel_size=10,
                 dilation=2,
             )
-        # self.fc = Embeddings({'feature_num': size_embeddings, 'hidden': size_embeddings, 'seq_len': 100})
-
         encoder_layer = nn.TransformerEncoderLayer(d_model=size_embeddings, nhead=4, dim_feedforward=size_embeddings, batch_first=True)
-        self.model = torch.nn.TransformerEncoder(encoder_layer, num_layers=4)
+        self.model = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
     def forward(self, batch):
         batch = self.norm(batch)
         batch = self.fc(batch)

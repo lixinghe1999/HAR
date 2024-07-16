@@ -166,8 +166,8 @@ def index_moments(json_path: str = "../dataset/ego4d/v2/annotations/moments_val.
     print(f"Avg. moment for each video {np.mean(avg_len)}")
     return moment_dict
 
-def index_narrations(keep_vid):
-    narration_raw = load_json("../dataset/ego4d/v2/annotations/narration.json")
+def index_narrations(folder, keep_vid):
+    narration_raw = load_json(folder)
     narration_dict = defaultdict(list)
     # summary_dict = defaultdict(list)
     avg_len = []

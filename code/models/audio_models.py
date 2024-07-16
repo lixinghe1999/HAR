@@ -5,17 +5,13 @@ from models.mn.preprocess import AugmentMelSTFT
 import torch.nn as nn
 
 class Mobilenet_Encoder(nn.Module):
-    def __init__(self):
+    def __init__(self, model_name = 'mn10_as'):
         super().__init__()
-        model_name = 'mn40_as'
-        self.model = get_mobilenet_model(pretrained_name='mn40_as', width_mult=NAME_TO_WIDTH(model_name), 
+        self.model = get_mobilenet_model(pretrained_name=model_name, width_mult=NAME_TO_WIDTH(model_name), 
                                          strides=[2, 2, 2, 2], head_type='mlp')
         self.preprocess = AugmentMelSTFT()
 
-    def forward(self, x, feature_output=True):
+    def forward(self, x, return_fmaps=False):
         x = self.preprocess(x)
-        x, feature = self.model(x.unsqueeze(1))
-        if feature_output:
-            return feature
-        else:
-            return x
+        x, feature = self.model(x.unsqueeze(1), return_fmaps=return_fmaps)
+        return x, feature

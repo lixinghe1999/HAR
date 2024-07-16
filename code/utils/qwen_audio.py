@@ -1,16 +1,16 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.generation import GenerationConfig
 import torch
-def load_model():
+def init_qwen():
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen-Audio-Chat", trust_remote_code=True)
 
     model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen-Audio-Chat", device_map="cuda", trust_remote_code=True, cache_dir='./cache').eval()
     return model, tokenizer
-def inference(model, tokenizer):
+def inference_qwen(model, tokenizer):
     # 1st dialogue turn
     query = tokenizer.from_list_format([
-        {'audio': 'tmp.flac'}, # Either a local path or an url
-        {'text': 'Describe the content of the audio.'},
+        {'audio': 'tmp.wav'}, # Either a local path or an url
+        {'text': 'please describe the possible action related to the audio.'},
     ])
     response, history = model.chat(tokenizer, query=query, history=None)
     # print(response)
