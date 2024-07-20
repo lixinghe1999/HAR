@@ -75,6 +75,8 @@ def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, 
             window_idx.append(input_dict)
     print('Number of Scenario', len(scenario_map))
     return window_idx
+
+
 class Ego4D_Narration(Dataset):
     def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio']):
         self.folder = folder
@@ -106,6 +108,26 @@ class Ego4D_Narration(Dataset):
         # self.scenario_weight = self.get_class_weight('scenario')
         self.sr_imu = 200
         self.sr_audio = 16000
+    def audio_stat(self, fname='resources/egoexo_atomic_prune.json'):
+        for i in tqdm(range(0, self.__len__())):
+            data = self.__getitem__(i)
+            audio = data['audio']
+            snr = np.max(audio) / np.mean(np.abs(audio))
+            self.window_idx[i]['snr'] = float(snr)
+            # rms = np.sqrt(np.mean(audio**2))
+            # self.window_idx[i]['rms'] = float(rms)
+        self.save_json(fname)
+    def audio_prune(self, fname='resources/egoexo_atomic_prune.json', snr_thres=None,):
+        new_idx = []
+        for i in tqdm(range(0, self.__len__())):
+            if self.window_idx[i]['snr'] > snr_thres:
+                new_idx.append(i)
+            # data = self.__getitem__(i)
+            # if data['snr'] > snr_thres:
+            #     new_idx.append(i)
+        self.window_idx = [self.window_idx[i] for i in new_idx]
+        print(f"remaining {len(self.window_idx)} windows")
+        self.save_json(fname)
     def get_class_weight(self, key):
         label_count = {}
         for data in self.window_idx:
@@ -122,8 +144,11 @@ class Ego4D_Narration(Dataset):
         with open(filename, 'w') as f:
             json.dump(self.window_idx, f, indent=4)    
     def add(self, idx, key, value):
-        self.window_idx[idx][key] = value
-
+        if len(value) > 1: # add multiple values
+            for i, v in zip(idx, value):
+                self.window_idx[i][key] = float(v)
+        else:
+            self.window_idx[idx][key] = float(value)
     def split_with_scenario(self, ratio = 0.8):
         train_idx = []
         test_idx = []
@@ -139,7 +164,7 @@ class Ego4D_Narration(Dataset):
             train_idx += idx[:train_size]
             test_idx += idx[train_size:]
         return train_idx, test_idx
-    
+
     def __getitem__(self, i):
         dict_out = self.window_idx[i].copy()
         uid = dict_out["video_uid"]
@@ -160,14 +185,50 @@ class Ego4D_Narration(Dataset):
             if audio.shape[-1] < self.sr_audio * self.window_sec:
                 audio = np.pad(audio, (0, self.sr_audio * self.window_sec - audio.shape[-1]))
             dict_out["audio"] = audio
-        if 'context_audio' in self.modal:
-            context_length = 2
-            offset = max(np.random.randint(-context_length, context_length) + w_s, 0)
-            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=offset, duration=context_length, sr=self.sr_audio)
-            if audio.shape[-1] < self.sr_audio * context_length:
-                audio = np.pad(audio, (0, self.sr_audio * context_length - audio.shape[-1]))
-            dict_out["context_audio"] = audio
         return dict_out
+
+class Ego4D_Narration_Sequence(Ego4D_Narration):
+    '''
+    Building upon Ego4D_Narration, this class is used to generate a sequence of data for each scenario
+    The class accept pre-definded Ego4D_Narration to initialize it
+    '''
+    def __init__(self, parent_obj, num_sequence=5):
+        # copy attribute
+        if isinstance(parent_obj, Ego4D_Narration):
+            pass
+        else:
+            parent_obj = parent_obj.dataset
+        for key in parent_obj.__dict__.keys():
+            setattr(self, key, getattr(parent_obj, key))
+        
+        sequences = []
+        print('Total {} windows'.format(len(self.window_idx)))
+        for i in range(super().__len__() - num_sequence):
+            video_uid = self.window_idx[i]['video_uid']
+            sequence = [i]
+            for j in range(1, num_sequence):
+                _video_uid = self.window_idx[i + j]['video_uid']
+                if video_uid != _video_uid:
+                    break
+                sequence.append(i + j)
+            if len(sequence) == num_sequence:
+                sequences.append({'window_idx':sequence, 'scenario':self.window_idx[i]['scenario']})
+        self.sequences = sequences       
+        print('Total {} sequences'.format(len(self.sequences))) 
+    def __len__(self):
+        return len(self.sequences)
+    def __getitem__(self, i):
+        sequence = self.sequences[i]
+        dict_out = {'audio':[], 'imu':[],}    
+        for idx in sequence['window_idx']:
+            _dict = super().__getitem__(idx)
+            for key in dict_out.keys():
+                dict_out[key].append(_dict[key])
+        dict_out = {k: np.stack(dict_out[k]) for k in dict_out.keys()}
+        dict_out['scenario'] = sequence['scenario']
+        return dict_out
+
+
 class IMU2CLIP_Dataset(Dataset):
     def __init__(self,  folder='../../dataset/ego4d/v2/', window_sec=2.5, modality=['imu', 'audio'], split='train'):
         self.folder = folder

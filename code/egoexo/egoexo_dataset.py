@@ -158,6 +158,7 @@ class EgoExo_atomic(Dataset):
         return train_idx, test_idx
     def negative(self):
         new_all_descriptions = []
+        gap_descriptions = []
         for i in tqdm(range(len(self.window_idx) - 1)):
             take_uid1 = self.window_idx[i]['take_uid']
             time_stamp1 = self.window_idx[i]['timestamp']
@@ -166,13 +167,18 @@ class EgoExo_atomic(Dataset):
                 new_descrption = self.window_idx[i].copy()
                 new_descrption['text'] = 'unsure'
                 del new_descrption['sound']
-                for timestamp in np.arange(time_stamp1 + self.window_sec/2, time_stamp2 - self.window_sec/2, self.window_sec):
-                    new_descrption['timestamp'] = timestamp
-                    new_all_descriptions.append(new_descrption)
+                gap_descriptions.append(time_stamp2 - time_stamp1)
+                if time_stamp2 - time_stamp1 < 2 * self.window_sec:
+                    continue
+                else:
+                    for timestamp in np.arange(time_stamp1 + self.window_sec, time_stamp2 - self.window_sec, self.window_sec):
+                        new_descrption['timestamp'] = float(timestamp)
+                        new_all_descriptions.append(new_descrption)
         self.window_idx = new_all_descriptions
         print('Total number of Negative samples', len(self.window_idx))
+        print('Average gap between two descriptions:', np.mean(gap_descriptions))
     def prune_slience(self, fname='resources/egoexo_atomic_prune.json'):
-        new_all_descriptions = []
+        new_window_idx = []
         pruned, kept = 0, 0
         for i in tqdm(range(0, self.__len__())):
             data = self.__getitem__(i)
@@ -181,10 +187,10 @@ class EgoExo_atomic(Dataset):
             if len(valid_audio) == 0: # no sound
                 pruned += 1
             else:
-                new_all_descriptions.append(self.window_idx[i])
+                new_window_idx.append(self.window_idx[i])
                 kept += 1
         print('Pruned:', pruned, 'Kept:', kept)
-        self.window_idx = new_all_descriptions
+        self.window_idx = new_window_idx
         self.save_json(fname)
     def save_json(self, fname):
         json.dump(self.window_idx, open(fname, 'w'), indent=4)
@@ -216,15 +222,15 @@ class EgoExo_atomic(Dataset):
             if imu.shape[1] < self.window_sec * self.sr_imu:
                 imu = np.pad(imu, ((0, 0), (0, int(self.window_sec * self.sr_imu - imu.shape[1]))), 'constant', constant_values=0)
             dict_out['imu'] = imu
-        if 'video' in self.modal:
+        if 'image' in self.modal:
             video_dir = os.path.join(os.path.dirname(take_path), 'frame_aligned_videos/downscaled/448/')
             videos = os.listdir(video_dir)
             for video in videos:
                 if video.endswith('_214-1.mp4'):
                     dict_out['video_path'] = os.path.join(video_dir, video)
                     images, _, _= torchvision.io.read_video(dict_out['video_path'], 
-                                                            start_pts=timestamp, end_pts=timestamp, pts_unit='sec', output_format='TCHW')
-                    dict_out['video'] = images
+                                                            start_pts=dict_out['timestamp'], end_pts=dict_out['timestamp'], pts_unit='sec')
+                    dict_out['image'] = images
                     break           
         return dict_out
 

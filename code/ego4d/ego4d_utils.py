@@ -22,6 +22,17 @@ import torchvision.io as io
 PATH_EGO_META = "../v1/ego4d.json"
 PATH_ARIA_META = "/fsx/andreamad8/aria/aria.json"
 
+def taxonomy2map(taxonomy='../dataset/ego4d/v2/annotations/narration_noun_taxonomy.csv'):
+    import pandas as pd
+    taxonomy = pd.read_csv(taxonomy)
+    taxonomy_map = {}
+    for i, row in taxonomy.iterrows():
+        for word in eval(row['group']):
+            taxonomy_map[word] = i
+            taxonomy_map[word.lower() + 's'] = i 
+    print('number of taxonomy:', len(taxonomy))
+    print('number of words in taxonomy:', len(taxonomy_map))
+    return taxonomy_map
 
 def load_json(json_path: str):
     """

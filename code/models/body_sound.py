@@ -1,9 +1,6 @@
 import torch.nn as nn
 from models.audio_models import Mobilenet_Encoder
 from models.imu_models import TransformerEncoder
-from transformers import DistilBertTokenizer, DistilBertModel
-from sentence_transformers import SentenceTransformer
-
 
 import torch
 import numpy as np
@@ -52,7 +49,7 @@ class Body_Sound(nn.Module):
     '''
     A model that map audio and imu to the same space, note that we will lose some information
     '''
-    def __init__(self, cfg=['context']):
+    def __init__(self, sequence=0, cfg=[]):
         super().__init__()
         self.audio_model = Mobilenet_Encoder('mn10_as')
         self.imu_model = TransformerEncoder()
@@ -64,41 +61,62 @@ class Body_Sound(nn.Module):
             self.context_audio_model = Mobilenet_Encoder('mn10_as')
             self.proj_context = nn.Linear(960, 384)
             self.context = nn.Linear(768, 91)
-
+    
+        if sequence > 0:
+            self.sequence_model = nn.LSTM(768, 768, 1, batch_first=True)
+        self.fc = nn.Linear(768, 91)
     def freeze_body_sound(self):
         for param in self.proj_audio.parameters():
             param.requires_grad = False
         for param in self.imu_model.parameters():
             param.requires_grad = False
-    def forward(self, audio, imu):
+    def forward_contrastive(self, data, train=False, sequence=0, device='cuda'):
+        '''
+        input: audio + imu
+        output: train, CLIP Loss, test, audio, imu feature
+        '''
+        audio, imu = data['audio'].to(device), data['imu'].to(device)
+        if sequence > 0: # if sequence > 0, we will flatten the input
+            audio = audio.view(-1, audio.shape[-1]) # [B, S, D] -> [B*S, D]
+            imu = imu.view(-1, *imu.shape[-2:]) # [B, S, C, D] -> [B*S, C, D]
         _, audio_feature = self.audio_model(audio)
         audio = self.proj_audio(audio_feature)
         imu = self.imu_model(imu)
-        return audio, imu
-    
-    def forward_context(self, data, train=False, device='cuda'):
-        audio, imu, = data['audio'].to(device), data['imu'].to(device)
-        body_sound_audio, body_sound_imu = self.forward(audio, imu)
-        body_sound = (body_sound_audio + body_sound_imu)/2
+        if train:
+            return self.loss(audio, imu, self.logit_scale)
+        else:
+            return audio, imu
 
-        scenario = data['scenario'].to(device)
-        _, context_feature = self.context_audio_model(audio)
-        context_feature = self.proj_context(context_feature)
-
-        feature = torch.cat([body_sound, context_feature], dim=1)
-        context_pred = self.context(feature)
+    def forward(self, data, train=False, sequence=0, device='cuda'):
+        audio, imu = data['audio'].to(device), data['imu'].to(device)
+        if sequence > 0: # if sequence > 0, we will flatten the input
+            audio = audio.view(-1, audio.shape[-1]) # [B, S, D] -> [B*S, D]
+            imu = imu.view(-1, *imu.shape[-2:]) # [B, S, C, D] -> [B*S, C, D]
+        _, audio_feature = self.audio_model(audio)
+        audio = self.proj_audio(audio_feature)
+        imu = self.imu_model(imu)
+        if sequence > 0:
+            audio = audio.view(-1, sequence, audio.shape[-1])
+            imu = imu.view(-1, sequence, imu.shape[-1])  
+            feature = torch.cat([audio, imu], dim=2) 
+            feature, _ = self.sequence_model(feature)
+        else:
+            feature = torch.cat([audio, imu], dim=1)
+        output = self.fc(feature); scenario = data['scenario'].to(device)
 
         if train:
-            loss = nn.functional.binary_cross_entropy_with_logits(context_pred, scenario)
+            loss = nn.functional.cross_entropy(output, scenario)
             return loss
         else:
-            return context_pred, scenario
+            return output, scenario
+
     def match_eval(self, audio, imu, return_index=False):
         '''
         evaluate the match accuracy, note that the accuracy dependes on batch_size
         '''
         logit_per_audio = audio @ imu.T
         argmax_per_audio = logit_per_audio.argmax(dim=1)
+        # print(argmax_per_audio)
         audio_match_mask = (argmax_per_audio == torch.arange(len(argmax_per_audio), device=argmax_per_audio.device))
         audio_match_acc = audio_match_mask.float().mean().item()
 

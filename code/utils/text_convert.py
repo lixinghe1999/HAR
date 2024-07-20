@@ -1,3 +1,7 @@
+'''
+We get the interesting sound from general text
+'''
+
 import json
 import os
 import torch

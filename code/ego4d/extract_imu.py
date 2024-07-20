@@ -78,7 +78,7 @@ def resampleIMU(signal, timestamps, duration):
     else:
         sampling_rate = 200
     # print(f"SR: {sampling_rate_old}, SR AFTER: {sampling_rate}")
-
+    
     # pad_before = int(timestamps[0] / 1000) * 200 # always 0
     # pad_after = int(duration * 200) - signal.shape[1]
     # print(pad_after, signal.shape, timestamps.shape, (timestamps[-1]-timestamps[0])/1000, duration)

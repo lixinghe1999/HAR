@@ -444,6 +444,8 @@ class ImageBindModel(nn.Module):
     def forward(self, inputs):
         outputs = {}
         for modality_key, modality_value in inputs.items():
+            if modality_value is None:
+                continue
             reduce_list = (
                 modality_value.ndim >= 5
             )  # Audio and Video inputs consist of multiple clips
@@ -490,17 +492,17 @@ def imagebind_huge(pretrained=False):
     )
 
     if pretrained:
-        if not os.path.exists(".checkpoints/imagebind_huge.pth"):
+        if not os.path.exists("./cache/imagebind_huge.pth"):
             print(
-                "Downloading imagebind weights to .checkpoints/imagebind_huge.pth ..."
+                "Downloading imagebind weights to ./cache/imagebind_huge.pth ..."
             )
-            os.makedirs(".checkpoints", exist_ok=True)
+            os.makedirs("./cache", exist_ok=True)
             torch.hub.download_url_to_file(
                 "https://dl.fbaipublicfiles.com/imagebind/imagebind_huge.pth",
-                ".checkpoints/imagebind_huge.pth",
+                "./cache/imagebind_huge.pth",
                 progress=True,
             )
 
-        model.load_state_dict(torch.load(".checkpoints/imagebind_huge.pth"))
+        model.load_state_dict(torch.load("./cache/imagebind_huge.pth"))
 
     return model

@@ -96,8 +96,11 @@ def load_and_transform_vision_data(image_paths, device):
     )
     
     for image_path in image_paths:
-        with open(image_path, "rb") as fopen:
-            image = Image.open(fopen).convert("RGB")
+        if type(image_path) == str:
+            with open(image_path, "rb") as fopen:
+                image = Image.open(fopen).convert("RGB")
+        else:
+            image = Image.fromarray(image_path)
 
         image = data_transform(image).to(device)
         image_outputs.append(image)
@@ -147,7 +150,10 @@ def load_and_transform_audio_data(
             waveform, sr = torchaudio.load(audio_path)
         else:
             waveform, sr = audio_path
-            waveform = torch.tensor(waveform)
+            if type(waveform) != torch.Tensor:
+                waveform = torch.tensor(waveform)
+            if len(waveform.shape) == 1:
+                waveform = waveform.unsqueeze(0)
         if sample_rate != sr:
             waveform = torchaudio.functional.resample(
                 waveform, orig_freq=sr, new_freq=sample_rate
