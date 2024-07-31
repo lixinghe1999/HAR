@@ -1,5 +1,5 @@
 from egoexo.egoexo_dataset import EgoExo_atomic
-from ego4d.ego_dataset import Ego4D_Narration
+from ego4d.ego4d_dataset import Ego4D_Narration
 
 from EfficientAT.windowed_inference import EATagger
 from limu_bert import LIMU_BERT_Inferencer

@@ -7,12 +7,8 @@ from tqdm import tqdm
 import math
 import string
 import librosa
-import soundfile as sf
 import json
 from tqdm import tqdm
-
-from .text_cluster import close_to, cluster_plot, cluster_map
-import time
 
 def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, window_sec):
     window_idx = []
@@ -74,8 +70,34 @@ def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, 
             }
             window_idx.append(input_dict)
     print('Number of Scenario', len(scenario_map))
-    return window_idx
-
+    scenario_map = {v:k for k,v in scenario_map.items()}
+    return window_idx, scenario_map
+def prepare_free(filter_video_uid, metadata, meta_audio, meta_imu, modality, window_sec):
+    window_idx = []
+    scenario_map = {}
+    for video_uid in tqdm(filter_video_uid):
+        duration = metadata[video_uid]["video_metadata"]["video_duration_sec"]
+        if 'imu' in modality and metadata[video_uid]["has_imu"]:
+            duration = min(duration, meta_imu[video_uid])
+        for scenario in metadata[video_uid]["scenarios"]:
+            if scenario not in scenario_map:
+                scenario_map[scenario] = len(scenario_map)
+        _scenario = [scenario_map[scenario] for scenario in metadata[video_uid]["scenarios"]]
+        num_sample = int(duration // window_sec)
+        for i in range(num_sample):
+            w_s = i * window_sec
+            w_e = (i+1) * window_sec
+            input_dict = {
+                "window_start": w_s,
+                "window_end": w_e,
+                "video_uid": video_uid,
+                "text": '',
+                "scenario": _scenario,
+            }
+            window_idx.append(input_dict)
+    print('Number of Scenario', len(scenario_map))
+    scenario_map = {v:k for k,v in scenario_map.items()}
+    return window_idx, scenario_map
 
 class Ego4D_Narration(Dataset):
     def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio']):
@@ -86,6 +108,10 @@ class Ego4D_Narration(Dataset):
             self.pre_compute_json = pre_compute_json
             with open(pre_compute_json, 'r') as f:
                 self.window_idx = json.load(f)
+            self.scenario_map = json.load(open('resources/scenario_map.json', 'r'))
+            # change the key of sceanrio_map from string to int
+            self.scenario_map = {int(k):v for k,v in self.scenario_map.items()}
+
         else:
             metadata = get_ego4d_metadata(os.path.join(self.folder, "ego4d.json"), "video")
             meta_imu = json.load(open(os.path.join(self.folder, "annotations/meta_imu.json"), 'r'))
@@ -93,19 +119,18 @@ class Ego4D_Narration(Dataset):
             filter_video_uid = []
             for video_uid in list(metadata.keys()):
                 keep_or_not = True
-                if "imu" in modal:
-                    if not metadata[video_uid]["has_imu"] and video_uid not in meta_imu:
-                        keep_or_not = False
-                if "audio" in modal:
-                    if video_uid not in meta_audio:
-                        keep_or_not = False
+                if "imu" in modal and video_uid not in meta_imu:
+                    keep_or_not = False
+                if "audio" in modal and video_uid not in meta_audio:
+                    keep_or_not = False
                 if keep_or_not:
                     filter_video_uid.append(video_uid)
             narration_dict = index_narrations(os.path.join(self.folder, "annotations/narration.json"), filter_video_uid)
-            self.window_idx = prepare_narration(narration_dict, metadata, meta_audio, meta_imu, self.modal, window_sec)
+            self.window_idx, self.scenario_map = prepare_narration(narration_dict, metadata, meta_audio, meta_imu, self.modal, window_sec)
+            # save scenario_map
+            with open('resources/scenario_map.json', 'w') as f:
+                json.dump(self.scenario_map, f, indent=4)
         print(f"There are {len(self.window_idx)} windows to process.")
-        # self.subject_weight = self.get_class_weight('subject')
-        # self.scenario_weight = self.get_class_weight('scenario')
         self.sr_imu = 200
         self.sr_audio = 16000
     def audio_stat(self, fname='resources/egoexo_atomic_prune.json'):
@@ -150,20 +175,47 @@ class Ego4D_Narration(Dataset):
         else:
             self.window_idx[idx][key] = float(value)
     def split_with_scenario(self, ratio = 0.8):
+        '''
+        For each video (may refer to multiple scenarios), split the data into train and test set
+        For the fairness of classification
+        '''
         train_idx = []
         test_idx = []
-        scenario_idx = {}
+        video_uid_idx = {}
         for i, data in enumerate(self.window_idx):
-            for scenario in data['scenario']:
-                if scenario not in scenario_idx:
-                    scenario_idx[scenario] = []
-                scenario_idx[scenario].append(i)
+            video_uid = data['video_uid']
+            if video_uid not in video_uid_idx:
+                video_uid_idx[video_uid] = []
+            video_uid_idx[video_uid].append(i)
         
-        for scenario, idx in scenario_idx.items():
+        for video_uid, idx in video_uid_idx.items():
             train_size = int(len(idx) * ratio)
             train_idx += idx[:train_size]
             test_idx += idx[train_size:]
+        print('Train size: {}, Test size: {}'.format(len(train_idx), len(test_idx)))
         return train_idx, test_idx
+    def split_new_scenario(self, novel_scenario):
+        '''
+        In case we want to discover new scenario with the dataset, the setting is closed to continual learning
+        '''
+        scenario_idx = {}
+        for i, data in enumerate(self.window_idx):
+            scenarios = data['scenario']
+            for scenario in scenarios:
+                if scenario not in scenario_idx:
+                    scenario_idx[scenario] = []
+                scenario_idx[scenario].append(i)
+        # select the last scenarios
+        novel_scenario_names = [self.scenario_map[scenario] for scenario in novel_scenario]
+        print('Selected scenario: {}'.format(novel_scenario_names))
+        novel_idx = []
+        for scenario in novel_scenario:
+            novel_idx += scenario_idx[scenario]
+        # remove duplicate
+        novel_idx = list(set(novel_idx))
+        support_idx = list(set(range(len(self.window_idx))) - set(novel_idx))
+        print('Support size: {}, Novel size: {}'.format(len(support_idx), len(novel_idx)))
+        return support_idx, novel_idx
 
     def __getitem__(self, i):
         dict_out = self.window_idx[i].copy()
@@ -172,19 +224,29 @@ class Ego4D_Narration(Dataset):
         w_e = dict_out["window_end"]
         dict_out['timestamp'] = (w_s + w_e) / 2
 
-        scenario_vec = np.zeros(91, dtype=float)
+        scenario_vec = np.zeros(len(self.scenario_map), dtype=float)
         scenario_vec[dict_out['scenario']] = 1
         dict_out['scenario'] = scenario_vec
         if 'imu' in self.modal:
             imu = np.load(os.path.join(self.folder, 'processed_imu', f"{uid}.npy")).astype(np.float32)
-            imu = imu[:, w_s*self.sr_imu:w_e*self.sr_imu]
+            imu = imu[:, int(w_s*self.sr_imu): int(w_e*self.sr_imu)]
             dict_out["imu"] = imu
         if 'audio' in self.modal:
-            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
-                                     offset=w_s, duration=self.window_sec, sr=self.sr_audio)
-            if audio.shape[-1] < self.sr_audio * self.window_sec:
-                audio = np.pad(audio, (0, self.sr_audio * self.window_sec - audio.shape[-1]))
-            dict_out["audio"] = audio
+            if 'context_audio' in self.modal: # no need to load twice
+                add_width = 2
+                audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
+                                     offset=w_s-add_width, duration=self.window_sec+2*add_width, sr=self.sr_audio)
+                if audio.shape[-1] < self.sr_audio * (self.window_sec + add_width*2):
+                    audio = np.pad(audio, (0, self.sr_audio * (self.window_sec + add_width*2) - audio.shape[-1]))
+                dict_out["context_audio"] = audio
+                audio = audio[add_width*self.sr_audio:-add_width*self.sr_audio]
+                dict_out["audio"] = audio
+            else:
+                audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
+                                        offset=w_s, duration=self.window_sec, sr=self.sr_audio)
+                if audio.shape[-1] < self.sr_audio * self.window_sec:
+                    audio = np.pad(audio, (0, self.sr_audio * self.window_sec - audio.shape[-1]))
+                dict_out["audio"] = audio
         return dict_out
 
 class Ego4D_Narration_Sequence(Ego4D_Narration):
@@ -193,17 +255,14 @@ class Ego4D_Narration_Sequence(Ego4D_Narration):
     The class accept pre-definded Ego4D_Narration to initialize it
     '''
     def __init__(self, parent_obj, num_sequence=5):
-        # copy attribute
         if isinstance(parent_obj, Ego4D_Narration):
             pass
         else:
             parent_obj = parent_obj.dataset
         for key in parent_obj.__dict__.keys():
             setattr(self, key, getattr(parent_obj, key))
-        
         sequences = []
-        print('Total {} windows'.format(len(self.window_idx)))
-        for i in range(super().__len__() - num_sequence):
+        for i in range(0, super().__len__() - num_sequence, num_sequence//2):
             video_uid = self.window_idx[i]['video_uid']
             sequence = [i]
             for j in range(1, num_sequence):
@@ -212,9 +271,48 @@ class Ego4D_Narration_Sequence(Ego4D_Narration):
                     break
                 sequence.append(i + j)
             if len(sequence) == num_sequence:
-                sequences.append({'window_idx':sequence, 'scenario':self.window_idx[i]['scenario']})
+                sequences.append({'window_idx':sequence, 'scenario':self.window_idx[i]['scenario'], 'video_uid':video_uid})
         self.sequences = sequences       
         print('Total {} sequences'.format(len(self.sequences))) 
+    def split_with_scenario(self, ratio = 0.8):
+        train_idx = []
+        test_idx = []
+        video_uid_idx = {}
+        for i, data in enumerate(self.sequences):
+            video_uid = data['video_uid']
+            if video_uid not in video_uid_idx:
+                video_uid_idx[video_uid] = []
+            video_uid_idx[video_uid].append(i)
+        
+        for video_uid, idx in video_uid_idx.items():
+            train_size = int(len(idx) * ratio)
+            train_idx += idx[:train_size]
+            test_idx += idx[train_size:]
+        print('Train size: {}, Test size: {}'.format(len(train_idx), len(test_idx)))
+        return train_idx, test_idx
+    def split_new_scenario(self, novel_scenario):
+        '''
+        In case we want to discover new scenario with the dataset, the setting is closed to continual learning
+        '''
+        scenario_idx = {}
+        for i, data in enumerate(self.sequences):
+            scenarios = data['scenario']
+            for scenario in scenarios:
+                if scenario not in scenario_idx:
+                    scenario_idx[scenario] = []
+                scenario_idx[scenario].append(i)
+        # select the last scenarios
+        novel_scenario_names = [self.scenario_map[scenario] for scenario in novel_scenario]
+        print('Selected scenario: {}'.format(novel_scenario_names))
+        novel_idx = []
+        for scenario in novel_scenario:
+            novel_idx += scenario_idx[scenario]
+        # remove duplicate
+        novel_idx = list(set(novel_idx))
+        support_idx = list(set(range(len(self.sequences))) - set(novel_idx))
+        print('Support size: {}, Novel size: {}'.format(len(support_idx), len(novel_idx)))
+        return support_idx, novel_idx
+
     def __len__(self):
         return len(self.sequences)
     def __getitem__(self, i):
@@ -225,98 +323,36 @@ class Ego4D_Narration_Sequence(Ego4D_Narration):
             for key in dict_out.keys():
                 dict_out[key].append(_dict[key])
         dict_out = {k: np.stack(dict_out[k]) for k in dict_out.keys()}
-        dict_out['scenario'] = sequence['scenario']
+        scenario_vec = np.zeros(len(self.scenario_map), dtype=np.float32)
+        scenario_vec[sequence['scenario']] = 1
+        dict_out['scenario'] = scenario_vec
         return dict_out
 
-
-class IMU2CLIP_Dataset(Dataset):
-    def __init__(self,  folder='../../dataset/ego4d/v2/', window_sec=2.5, modality=['imu', 'audio'], split='train'):
+class Ego4D_Free(Ego4D_Narration):
+    def __init__(self, folder='../dataset/ego4d/v2/', window_sec=20, modal=['imu', 'audio']):
         self.folder = folder
-        self.metadata = get_ego4d_metadata('../../dataset/ego4d/ego4d.json', "video")
-        self.meta_imu = json.load(open('../../dataset/ego4d/v2/annotations/meta_imu.json', 'r'))
-        self.moments = self.load_csv('dataset_motion_narr_2.5_{}_0.csv'.format(split))
-        self.moment_dict = {}
-        self.modality = modality
-        for i in self.moments:
-            if i['video_uid'] not in self.moment_dict:
-                self.moment_dict[i['video_uid']] = []
-            self.moment_dict[i['video_uid']].append([i['label'], int(i['window_start']), int(i['window_end'])])
-        self.moment_dict = filter_by_modality(self.metadata, self.moment_dict, modality)
-        # print(f"Total {len(self.moment_dict)} windows to process")
-        self.window_idx = prepare_moment(self.moment_dict, self.metadata, self.meta_imu, window_sec)
-        print(f"Total {len(self.window_idx)} windows to process")
-        self.labels =  {"head movement":0, "stands up":1, "sits down":2, "walking":3}
-        self.num_class = len(self.labels)
-        self.weights = self.get_weight()
-    def load_csv(self, csv_path):
-        import csv
-        """
-        Load a CSV file
-        """
-        with open(csv_path, "r", encoding="utf-8") as f_name:
-            reader = csv.DictReader(f_name)
-            data = []
-            for row in reader:
-                data.append(row)
-        return data
+        self.window_sec = window_sec
+        self.modal = modal
+        metadata = get_ego4d_metadata(os.path.join(self.folder, "ego4d.json"), "video")
+        meta_imu = json.load(open(os.path.join(self.folder, "annotations/meta_imu.json"), 'r'))
+        meta_audio = [v[:-4] for v in os.listdir(os.path.join(self.folder, "audio"))]
+        filter_video_uid = []
+        for video_uid in list(metadata.keys()):
+            keep_or_not = True
+            if "imu" in modal and video_uid not in meta_imu:
+                keep_or_not = False
+            if "audio" in modal and video_uid not in meta_audio:
+                keep_or_not = False
+            if keep_or_not:
+                filter_video_uid.append(video_uid)
+        self.window_idx, self.scenario_map = prepare_free(filter_video_uid, metadata, meta_audio, meta_imu, modal, window_sec)
+        print(f"There are {len(self.window_idx)} windows to process.")
+        self.sr_imu = 200
+        self.sr_audio = 16000
     def __len__(self):
         return len(self.window_idx)
-    def get_weight(self):
-        weight = np.zeros(self.num_class)
-        for data in self.window_idx:
-            label = self.labels[data['text']]
-            weight[label] += 1
-        weight = 1 / weight
-        weight = weight / weight.sum()
-        return weight.astype(np.float32)
-    def __getitem__(self, i):
-        dict_out = self.window_idx[i]
-        uid = dict_out["video_uid"]
-        w_s = dict_out["window_start"]
-        w_e = dict_out["window_end"]
-        dict_out['label'] = self.labels[dict_out['text']]
 
-        if 'imu' in self.modality:
-            imu = np.load(os.path.join(self.folder, 'processed_imu', f"{uid}.npy")).astype(np.float32)
-            imu = imu[:, w_s*200:w_e*200]
-            dict_out["imu"] = imu
-        if 'audio' in self.modality:
-            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), offset=w_s, duration=w_e-w_s, sr=16000)
-            dict_out["audio"] = audio
-        return dict_out
-def visualize_data(dict_out):
-    import matplotlib.pyplot as plt
-    import scipy.io.wavfile as wavfile
-    fig, axs = plt.subplots(1, 4)
-    if 'imu' in dict_out:
-        print(dict_out['imu'].shape)
-        axs[0].plot(dict_out['imu'][:3].T)
-        axs[1].plot(dict_out['imu'][3:].T)
-        axs[0].set_title('IMU 1-3')
-        axs[1].set_title('IMU 4-6')
-    if 'audio' in dict_out:
-        axs[2].plot(dict_out['audio'])
-        axs[2].set_title('Audio')
-        wavfile.write('test.wav', 16000, dict_out['audio'])
-    if 'image' in dict_out:
-        axs[3].imshow(dict_out['image'])
-        axs[3].set_title('Image')
-    plt.title(dict_out['text'])
-    plt.savefig('test.png')
-def visualize_class(labels):
-    import matplotlib.pyplot as plt
-    plt.rcParams.update({'font.size': 6})
 
-    values = labels.values()
-    labels = labels.keys()
-    plt.figure(figsize=(18, 6))
-    plt.subplots_adjust(bottom=0.4,)
-
-    plt.bar(np.arange(len(labels)), values)
-    plt.xticks(np.arange(len(labels)), labels, rotation=90)
-    plt.title('Ego4D Moment Class Distribution')
-    plt.xlim(-1, len(values))
-    plt.savefig('ego4d_moment_distribution.pdf')
 if __name__ == '__main__':
     dataset = Ego4D_Narration(window_sec=1, folder='../../dataset/ego4d/v2/', modal=['audio', 'imu'])
     for i in range(10):

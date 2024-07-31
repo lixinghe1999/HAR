@@ -4,7 +4,7 @@ sys.path.append('..')
 from models.imu_models import TransformerEncoder
 from models.audio_models import AudioTagging
 from models.classification_head import Head
-from ego_dataset import Ego4D_Moment, Ego4D_Narration, IMU2CLIP_Dataset
+from ego4d.ego4d_dataset import Ego4D_Moment, Ego4D_Narration, IMU2CLIP_Dataset
 import torch
 from tqdm import tqdm
 import psutil

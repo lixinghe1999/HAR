@@ -133,8 +133,14 @@ class EgoExo_atomic(Dataset):
                     descriptions = x['descriptions']
                     for description in descriptions:
                         description['take_uid'] = take_uid
+                        description['scenario'] = self.takes_by_uid[take_uid]['task_name']
+                        # description['parent_scenario'] = self.takes_by_uid[take_uid]['parent_task_name']
+                        del description['ego_visible']
+                        del description['best_exo']
+                        del description['unsure'] 
                         self.window_idx.append(description)
         self.sr_imu = 200
+        self.channel_imu = 6
         self.sr_audio = 16000
         print('Total number of atomic descriptions:', len(self.window_idx))
     def __len__(self):
@@ -144,7 +150,7 @@ class EgoExo_atomic(Dataset):
         test_idx = []
         scenario_idx = {}
         for i, data in enumerate(self.window_idx):
-            scenario = data['task_name']
+            scenario = data['scenario']
             if scenario not in scenario_idx:
                 scenario_idx[scenario] = []
             scenario_idx[scenario].append(i)
@@ -154,7 +160,8 @@ class EgoExo_atomic(Dataset):
             train_size = int(len(idx) * ratio)
             train_idx += idx[:train_size]
             test_idx += idx[train_size:]
-
+        print('Number of scenarios:', len(scenario_idx))
+        print('Total number of train:', len(train_idx), 'Total number of test:', len(test_idx))
         return train_idx, test_idx
     def negative(self):
         new_all_descriptions = []
@@ -183,7 +190,7 @@ class EgoExo_atomic(Dataset):
         for i in tqdm(range(0, self.__len__())):
             data = self.__getitem__(i)
             audio = data['audio']
-            valid_audio = librosa.effects.split(y=audio[0], top_db=20, ref=1)
+            valid_audio = librosa.effects.split(y=audio, top_db=20, ref=1)
             if len(valid_audio) == 0: # no sound
                 pruned += 1
             else:
@@ -208,17 +215,22 @@ class EgoExo_atomic(Dataset):
         start = dict_out['timestamp'] - self.window_sec/2
         if 'audio' in self.modal:
             dict_out['audio_path'] = take_path + '.flac'
-            audio = librosa.load(dict_out['audio_path'], sr=self.sr_audio, mono=False, offset=start, duration=self.window_sec)[0]
-            if len(audio.shape) == 1: # some may only one channel
-                audio = np.expand_dims(audio, axis=0)
-            if audio.shape[1] < self.window_sec * self.sr_audio:
-                audio = np.pad(audio, ((0, 0), (0, int(self.window_sec * self.sr_audio - audio.shape[1]))), 'constant', constant_values=0)
-            dict_out['audio'] = audio
+            start_frame = int(start * 48000)
+            stop_frame = start_frame + int(self.window_sec * 48000)
+            audio = sf.read(dict_out['audio_path'], start=start_frame, stop=stop_frame, dtype='float32', always_2d=True)[0].T
+            audio = audio[:, ::3]
+            if audio.shape[-1] < self.window_sec * self.sr_audio:
+                audio = np.pad(audio, ((0, 0), (0, int(self.window_sec * self.sr_audio - audio.shape[-1]))), 'constant', constant_values=0)
+            if 'spatial_audio' in self.modal:
+                dict_out['spatial_audio'] = audio
+            # audio = librosa.load(dict_out['audio_path'], sr=self.sr_audio, mono=True, offset=start, duration=self.window_sec)[0]
+            dict_out['audio'] = audio[0] # MONO
+        
         if 'imu' in self.modal:
             down_sample_factor = 800 // self.sr_imu
             dict_out['imu_path'] = take_path + '.npy'
             imu = np.load(dict_out['imu_path']).astype(np.float32)[:, ::down_sample_factor]
-            imu = imu[:6, int(start * self.sr_imu): int(start * self.sr_imu) + int(self.window_sec * self.sr_imu)]
+            imu = imu[:self.channel_imu, int(start * self.sr_imu): int(start * self.sr_imu) + int(self.window_sec * self.sr_imu)]
             if imu.shape[1] < self.window_sec * self.sr_imu:
                 imu = np.pad(imu, ((0, 0), (0, int(self.window_sec * self.sr_imu - imu.shape[1]))), 'constant', constant_values=0)
             dict_out['imu'] = imu

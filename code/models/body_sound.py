@@ -1,7 +1,7 @@
 import torch.nn as nn
 from models.audio_models import Mobilenet_Encoder
 from models.imu_models import TransformerEncoder
-
+from models.sequence_model import SequenceModel_Transformer, SequenceModel_LSTM
 import torch
 import numpy as np
 class ClipLoss(nn.Module):
@@ -49,7 +49,7 @@ class Body_Sound(nn.Module):
     '''
     A model that map audio and imu to the same space, note that we will lose some information
     '''
-    def __init__(self, sequence=0, cfg=[]):
+    def __init__(self, sequence=0, num_class=91):
         super().__init__()
         self.audio_model = Mobilenet_Encoder('mn10_as')
         self.imu_model = TransformerEncoder()
@@ -57,14 +57,11 @@ class Body_Sound(nn.Module):
         self.loss = ClipLoss()
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-        if 'context' in cfg:
-            self.context_audio_model = Mobilenet_Encoder('mn10_as')
-            self.proj_context = nn.Linear(960, 384)
-            self.context = nn.Linear(768, 91)
-    
         if sequence > 0:
+            # self.sequence_model = SequenceModel_Transformer(input_size=768, layers=2)
+            # self.sequence_model = SequenceModel_LSTM(input_size=768, hidden_size=768, layers=1)
             self.sequence_model = nn.LSTM(768, 768, 1, batch_first=True)
-        self.fc = nn.Linear(768, 91)
+        self.fc = nn.Linear(768, num_class)
     def freeze_body_sound(self):
         for param in self.proj_audio.parameters():
             param.requires_grad = False
@@ -88,24 +85,32 @@ class Body_Sound(nn.Module):
             return audio, imu
 
     def forward(self, data, train=False, sequence=0, device='cuda'):
+        '''
+        input: audio + imu
+        output: train, Binary Cross Entropy Loss, test, FC output, scenario
+        '''
         audio, imu = data['audio'].to(device), data['imu'].to(device)
         if sequence > 0: # if sequence > 0, we will flatten the input
-            audio = audio.view(-1, audio.shape[-1]) # [B, S, D] -> [B*S, D]
-            imu = imu.view(-1, *imu.shape[-2:]) # [B, S, C, D] -> [B*S, C, D]
+            if len(audio.shape) == 2: # audio = [B, D] split D into sequence D = S * D'
+                audio = audio.reshape(audio.shape[0], sequence, -1) # [B, D] -> [B, S, D']
+                imu = imu.reshape(imu.shape[0], sequence, imu.shape[1], -1) # [B, C, D] -> [B, S, C, D']
+            audio = audio.reshape(-1, audio.shape[-1]) # [B, S, D] -> [B*S, D]
+            imu = imu.reshape(-1, *imu.shape[-2:]) # [B, S, C, D] -> [B*S, C, D]
         _, audio_feature = self.audio_model(audio)
         audio = self.proj_audio(audio_feature)
         imu = self.imu_model(imu)
         if sequence > 0:
-            audio = audio.view(-1, sequence, audio.shape[-1])
-            imu = imu.view(-1, sequence, imu.shape[-1])  
+            audio = audio.reshape(-1, sequence, audio.shape[-1])
+            imu = imu.reshape(-1, sequence, imu.shape[-1])
             feature = torch.cat([audio, imu], dim=2) 
             feature, _ = self.sequence_model(feature)
+            feature = feature[:, -1, :]
+            # feature = self.sequence_model(feature)
         else:
             feature = torch.cat([audio, imu], dim=1)
         output = self.fc(feature); scenario = data['scenario'].to(device)
-
         if train:
-            loss = nn.functional.cross_entropy(output, scenario)
+            loss = nn.functional.binary_cross_entropy_with_logits(output, scenario)
             return loss
         else:
             return output, scenario

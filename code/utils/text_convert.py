@@ -11,7 +11,7 @@ from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from utils.qwen2 import load_model, inference
 from egoexo.egoexo_dataset import EgoExo_atomic
-from ego4d.ego_dataset import Ego4D_Narration
+from ego4d.ego4d_dataset import Ego4D_Narration
 from tqdm import tqdm
 
 
