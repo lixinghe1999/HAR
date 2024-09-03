@@ -2,7 +2,7 @@ from egoexo.egoexo_dataset import EgoExo_atomic
 from ego4d.ego4d_dataset import Ego4D_Narration
 
 from EfficientAT.windowed_inference import EATagger
-from limu_bert import LIMU_BERT_Inferencer
+from code.imu_recognition.limu_bert import LIMU_BERT_Inferencer
 from sentence_transformers import SentenceTransformer
 
 from utils.qwen_audio import init_qwen, inference_qwen

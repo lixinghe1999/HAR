@@ -325,6 +325,7 @@ def _mobilenet_v3(
     model = MN(inverted_residual_setting, last_channel, **kwargs)
 
     if pretrained_name in pretrained_models:
+        print(f"Loading pre-trained weights for model '{pretrained_name}'")
         model_url = pretrained_models.get(pretrained_name)
         state_dict = load_state_dict_from_url(model_url, model_dir=model_dir, map_location="cpu")
         if kwargs['head_type'] == "mlp":

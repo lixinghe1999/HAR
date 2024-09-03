@@ -8,6 +8,8 @@ import librosa
 from .egoexo_utils import prepare_pose
 import torchvision
 from tqdm import tqdm
+import projectaria_tools.core.mps as mps
+
 
 class EgoExo_pose(Dataset):
     def __init__(self, data_dir='../dataset/egoexo', split='train', window_sec=1, max_frames=1000000, stride=5):
@@ -94,6 +96,7 @@ def parse_skeleton(skeleton, joint_names):
             poses.append([-1,-1,-1]) #not visible
     return poses, flags
 
+
 class EgoExo_atomic(Dataset):
     def __init__(self, pre_compute_json=None, folder='../dataset/egoexo/', 
                  split='train', window_sec=2, modal=['audio', 'imu',]):
@@ -116,9 +119,10 @@ class EgoExo_atomic(Dataset):
             self.atomic = os.path.join(self.annotation_dir, 'atomic_descriptions_{}.json'.format(split))
             self.atomic = json.load(open(self.atomic))['annotations']
             self.window_idx = []
+            self.scenario_map = {}; self.parent_scenario_map = {}
             for take_uid, xs in self.atomic.items():
                 '''make sure the file exist'''
-                if take_uid not in self.takes_by_uid:
+                if take_uid not in self.takes_by_uid :
                     continue
                 take_meta = self.takes_by_uid[take_uid]
                 if take_meta['vrs_relative_path'] == None:
@@ -132,14 +136,21 @@ class EgoExo_atomic(Dataset):
                         continue
                     descriptions = x['descriptions']
                     for description in descriptions:
-                        description['take_uid'] = take_uid
+                        description['video_uid'] = take_uid
                         description['scenario'] = self.takes_by_uid[take_uid]['task_name']
-                        # description['parent_scenario'] = self.takes_by_uid[take_uid]['parent_task_name']
+
+                        if description['scenario'] not in self.scenario_map:
+                            self.scenario_map[description['scenario']] = len(self.scenario_map)
+                        description['parent_scenario'] = self.takes_by_uid[take_uid]['parent_task_name']
+
+                        if description['parent_scenario'] not in self.parent_scenario_map:
+                            self.parent_scenario_map[description['parent_scenario']] = len(self.parent_scenario_map)
                         del description['ego_visible']
                         del description['best_exo']
                         del description['unsure'] 
                         self.window_idx.append(description)
         self.sr_imu = 200
+        self.sr_trajectory = 200
         self.channel_imu = 6
         self.sr_audio = 16000
         print('Total number of atomic descriptions:', len(self.window_idx))
@@ -154,7 +165,7 @@ class EgoExo_atomic(Dataset):
             if scenario not in scenario_idx:
                 scenario_idx[scenario] = []
             scenario_idx[scenario].append(i)
-            self.window_idx[i]['scenario'] = list(scenario_idx.keys()).index(scenario)
+            self.window_idx[i]['scenario'] = self.scenario_map[scenario]
         
         for scenario, idx in scenario_idx.items():
             train_size = int(len(idx) * ratio)
@@ -205,7 +216,7 @@ class EgoExo_atomic(Dataset):
         self.window_idx[idx][key] = value
     def __getitem__(self, idx):
         dict_out = self.window_idx[idx].copy()
-        take_meta = self.takes_by_uid[dict_out['take_uid']]
+        take_meta = self.takes_by_uid[dict_out['video_uid']]
         dict_out['root_dir'] = take_meta['root_dir']
 
         dict_out['task_name'] = take_meta['task_name']
@@ -222,10 +233,9 @@ class EgoExo_atomic(Dataset):
             if audio.shape[-1] < self.window_sec * self.sr_audio:
                 audio = np.pad(audio, ((0, 0), (0, int(self.window_sec * self.sr_audio - audio.shape[-1]))), 'constant', constant_values=0)
             if 'spatial_audio' in self.modal:
-                dict_out['spatial_audio'] = audio
+                dict_out['spatial_audio'] = audio[5:, :] # binaural
             # audio = librosa.load(dict_out['audio_path'], sr=self.sr_audio, mono=True, offset=start, duration=self.window_sec)[0]
-            dict_out['audio'] = audio[0] # MONO
-        
+            dict_out['audio'] = audio[0] # MONO    
         if 'imu' in self.modal:
             down_sample_factor = 800 // self.sr_imu
             dict_out['imu_path'] = take_path + '.npy'
@@ -242,11 +252,82 @@ class EgoExo_atomic(Dataset):
                     dict_out['video_path'] = os.path.join(video_dir, video)
                     images, _, _= torchvision.io.read_video(dict_out['video_path'], 
                                                             start_pts=dict_out['timestamp'], end_pts=dict_out['timestamp'], pts_unit='sec')
-                    dict_out['image'] = images
+                    dict_out['image'] = images[0]
                     break           
+        if 'trajectory' in self.modal:
+            file_name = os.path.join(self.folder, take_meta['root_dir'], 'trajectory/closed_loop_trajectory.csv')
+            down_sample_factor = 1000 // self.sr_trajectory
+            closed_loop_traj = mps.read_closed_loop_trajectory(file_name)
+            closed_loop_traj = closed_loop_traj[::down_sample_factor]
+            closed_loop_traj = closed_loop_traj[int(start * self.sr_trajectory): int(start * self.sr_trajectory) + int(self.window_sec * self.sr_trajectory)]
+            translations = []; rotations = []
+            for pose_info in closed_loop_traj:
+                # query_timestamp_ns = int(closed_loop_traj[1].tracking_timestamp.total_seconds() * 1e9) # to be updated with your VRS timestamps
+                # pose_info = mps.utils.get_nearest_pose(closed_loop_traj, query_timestamp_ns)
+                T_world_device = pose_info.transform_world_device.to_matrix()
+                translation = T_world_device[:3, 3]
+                rotation = rotation_matrix_to_rpy(T_world_device[:3, :3])
+
+                translations.append(translation)
+                rotations.append(rotation)
+            dict_out['translation'] = np.array(translations, dtype=np.float32) - translations[0]
+            dict_out['rotation'] = np.array(rotations, dtype=np.float32) - rotations[0]
         return dict_out
 
+class EgoExo(EgoExo_atomic):
+    '''
+    load dataset ignore atomic
+    '''
+    def __init__(self, pre_compute_json=None, folder='../dataset/egoexo/', split='train', window_sec=2, modal=['audio', 'imu'], num_sequence=5):
+        # same as EgoExo_atomic
+        super().__init__(pre_compute_json, folder, split, window_sec, modal)
+        # reorganize self.window_idx
+        sequences = []
+        for i in range(0, super().__len__() - num_sequence, num_sequence//2):
+            print(self.window_idx[i].keys())
+            _sequences = {'text':[], 'take_uid':[], 'timestamp':[], 'scenario':[], 'subject':[]}
+            for j in range(num_sequence):
+                window_idx = self.window_idx[i + j]
+                for key in _sequences.keys():
+                    _sequences[key].append(window_idx[key])
+            print(_sequences)
 
+            break
+        #     video_uid = self.window_idx[i]['video_uid']
+        #     sequence = [i]
+        #     for j in range(1, num_sequence):
+        #         _video_uid = self.window_idx[i + j]['video_uid']
+        #         if video_uid != _video_uid:
+        #             break
+        #         sequence.append(i + j)
+        #     if len(sequence) == num_sequence:
+        #         sequences.append({'window_idx':sequence, 'scenario':self.window_idx[i]['scenario'], 'video_uid':video_uid})
+        # self.sequences = sequences       
+        print('Total {} sequences'.format(len(self.sequences))) 
+
+
+
+def rotation_matrix_to_rpy(R):
+    """
+    Converts a 3x3 rotation matrix to roll, pitch, and yaw angles.
+    
+    Args:
+        R (np.ndarray): 3x3 rotation matrix.
+    
+    Returns:
+        tuple: (roll, pitch, yaw) in radians.
+    """
+    # Extract the elements of the rotation matrix
+    r11, r12, r13 = R[0, 0], R[0, 1], R[0, 2]
+    r21, r22, r23 = R[1, 0], R[1, 1], R[1, 2]
+    r31, r32, r33 = R[2, 0], R[2, 1], R[2, 2]
+
+    # Calculate roll, pitch, and yaw
+    roll = np.arctan2(r32, r33)
+    pitch = np.arctan2(-r31, np.sqrt(r32**2 + r33**2))
+    yaw = np.arctan2(r21, r11)
+
+    return roll, pitch, yaw
 def visualize_audio(audio, folder):
     plt.figure()
     fig, axes = plt.subplots(1, 1, figsize=(12, 5))
@@ -316,34 +397,3 @@ def overlap_pose_atomic():
         if atomic_file + '.json' in pose_files:
             both_files.append(atomic_file)
     print('Total number of atomic descriptions:', len(atomic_files), 'Total number of poses:', len(pose_files), 'Total number of both:', len(both_files))
-if __name__ == '__main__':
-    # overlap_pose_atomic()
-    # dataset = EgoExo_pose(split='train')
-    # idx = random.randint(0, len(dataset)-1)
-    # # idx = 46
-    # print(len(dataset))
-    # data = dataset[idx]
-    # print(idx, data['gt'].shape, data['visible'].shape, data['camera_pose'].shape, 
-    #       data['audio'].shape, data['imu'].shape)
-    # folder = 'figs'
-    # visualize_pose(data['gt'], data['visible'], folder)
-    # visualize_audio(data['audio'], folder)
-    # visualize_imu(data['imu'], folder)
-
-    # for idx, data in enumerate(tqdm(dataset)):
-    #     print(data['imu'].shape, data['audio'].shape)
-    #     pass
-
-    # dataset = EgoExo_pose(split='train')
-    dataset = EgoExo_atomic(window_sec=2, modal=['efficientAT'])
-    for idx, data in enumerate(tqdm(dataset)):
-        # for key, value in data.items():
-        #     if type(value) == np.ndarray:
-        #         print(key, value.shape)
-        #     else:
-        #         print(key, value)
-        # folder = 'figs'
-        # visualize_audio(data['audio'], folder)
-        # visualize_imu(data['imu'], folder)
-        break
-        # pass

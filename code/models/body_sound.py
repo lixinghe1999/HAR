@@ -84,12 +84,18 @@ class Body_Sound(nn.Module):
         else:
             return audio, imu
 
-    def forward(self, data, train=False, sequence=0, device='cuda'):
+    def forward(self, data, train=False, sequence=0, device='cuda', modality_mask=None):
         '''
         input: audio + imu
+        modality_mask: set to 0
         output: train, Binary Cross Entropy Loss, test, FC output, scenario
         '''
         audio, imu = data['audio'].to(device), data['imu'].to(device)
+        if modality_mask == 'audio':
+            audio = torch.zeros_like(data['audio']).to(device)
+        elif modality_mask == 'imu':
+            imu = torch.zeros_like(data['imu']).to(device)
+    
         if sequence > 0: # if sequence > 0, we will flatten the input
             if len(audio.shape) == 2: # audio = [B, D] split D into sequence D = S * D'
                 audio = audio.reshape(audio.shape[0], sequence, -1) # [B, D] -> [B, S, D']

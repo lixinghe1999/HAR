@@ -1,6 +1,9 @@
+'''
+Scenario Recognition for Ego4D and EgoExo4D
+'''
+
 from egoexo.egoexo_dataset import EgoExo_atomic
-from ego4d.ego4d_dataset import Ego4D_Narration, Ego4D_Narration_Sequence, Ego4D_Free
-from ego4d.ego4d_sound import Ego4D_Sound
+from ego4d.ego4d_dataset import Ego4D_Narration, Ego4D_Narration_Sequence, Ego4D_Free, Ego4D_Sound
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from models.body_sound import Body_Sound
@@ -19,7 +22,7 @@ def scenario(train_loader, test_loader, model, log_dir, args):
             model.train()
             for i, data in enumerate(pbar):
                 optimizer.zero_grad()
-                loss = model(data, train=True, sequence=args.sequence)
+                loss = model(data, train=True, sequence=args.sequence, modality_mask=args.modality_mask)
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item()
@@ -34,9 +37,9 @@ def scenario(train_loader, test_loader, model, log_dir, args):
     with torch.no_grad():
         preds, gts = [], []
         for i, data in enumerate(tqdm(test_loader)): 
-            if i > 10:
+            if i > 200:
                 break
-            pred, gt = model(data, train=False, sequence=args.sequence)
+            pred, gt = model(data, train=False, sequence=args.sequence, modality_mask=args.modality_mask)
             # print(torch.sigmoid(pred), gt)
             preds.append(pred.cpu()); gts.append(gt.cpu())
         preds = torch.cat(preds, dim=0)
@@ -145,6 +148,7 @@ if __name__ == '__main__':
     parser.add_argument('--window_sec', type=int, default=2)
     parser.add_argument('--eval', type=str, default='multi-label', choices=['multi-label', 'multi-class']) 
     parser.add_argument('--num_class', type=int, default=91)
+    parser.add_argument('--modality_mask', type=str, default=None, choices=['audio', 'imu'])
     args = parser.parse_args()
     model = Body_Sound(sequence=args.sequence, num_class=args.num_class).to('cuda')
     if args.log is None: # No log and train, create a new log

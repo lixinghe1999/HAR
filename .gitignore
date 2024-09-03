@@ -11,5 +11,6 @@ code/resources
 *.txt
 *.out
 *.png
+*.mp4
 *.csv
 events.out.tfevents.*
