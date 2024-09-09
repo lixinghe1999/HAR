@@ -4,7 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from imblearn.ensemble import BalancedRandomForestClassifier
 from sklearn import metrics
-import features
+import utils.features as features
 import time
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -57,10 +57,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.prepare:
         # Load the dataset
-        dataset_folder = '/home/lixing/har/dataset/capture24'
+        dataset_folder = '/home/lixing/har/dataset/capture24/'
         datas = sorted(os.listdir(dataset_folder))
-        datas.remove('annotation-label-dictionary.csv')
-        datas.remove('metadata.csv')
+        datas = [data for data in datas if data.endswith('.csv.gz')]
         anno_label_dict = pd.read_csv(os.path.join(dataset_folder, 'annotation-label-dictionary.csv'), index_col='annotation', dtype='string')
         # Let's load one file
         Xs, Ys = [], []
@@ -72,7 +71,8 @@ if __name__ == '__main__':
             dtype={'x': 'f4', 'y': 'f4', 'z': 'f4', 'annotation': 'string'})
             X, Y = extract_windows(data, winsize='10s', col_label='annotation')
             # save to improve loading speed
-            np.save('capture24/' + user_name + '_X.npy', X); np.save('capture24/' + user_name + '_Y.npy', Y)
+            np.save(dataset_folder + user_name + '_X.npy', X); 
+            np.save(dataset_folder + user_name + '_Y.npy', Y)
             Xs.append(X)
             Ys.append(Y)
             print('finish loading data time:', time.time()-t_start)

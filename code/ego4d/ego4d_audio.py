@@ -4,7 +4,7 @@ sys.path.append('..')
 from models.imu_models import TransformerEncoder
 from models.audio_models import AudioTagging
 from models.classification_head import Head
-from ego4d.ego4d_dataset import Ego4D_Moment, Ego4D_Narration, IMU2CLIP_Dataset
+from ego4d.ego4d_dataset import Ego4D_Narration
 import torch
 from tqdm import tqdm
 import psutil
@@ -69,10 +69,8 @@ if __name__ == "__main__":
     test_dataset = Ego4D_Moment(window_sec=2.5, modality=['audio', 'cluster_label'], split='val')
     train_dataset.align_labels(train_dataset.labels, test_dataset.labels)
     test_dataset.align_labels(train_dataset.labels, test_dataset.labels)
-    # dataset = IMU2CLIP_Dataset(window_sec=2.5, modality=['imu'], split='train')
     weights = train_dataset.weights
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True, pin_memory=True, num_workers=4)
-    # dataset = IMU2CLIP_Dataset(window_sec=2.5, modality=['imu'], split='val')
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=False, num_workers=4)
     device = 'cuda'
    

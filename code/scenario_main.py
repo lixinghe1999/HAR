@@ -79,8 +79,6 @@ def body_sound(train_loader, test_loader, model, log_dir, args):
     with torch.no_grad():
         embeddings = {'audio':[], 'imu': [], 'scenario': []}
         for i, data in enumerate(tqdm(test_loader)): 
-            # if i > 5:
-            #     break
             audio_output, imu_output = model.forward_contrastive(data, train=False, sequence=args.sequence)
             embeddings['audio'].append(audio_output.cpu().numpy())
             embeddings['imu'].append(imu_output.cpu().numpy())

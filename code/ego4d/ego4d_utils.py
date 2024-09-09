@@ -149,11 +149,13 @@ def get_windows_in_clip(s_time: float, e_time: float, window_sec: float, stride:
         windows.append([window_start, window_end])
     return windows
 
-def index_moments(json_path: str = "../dataset/ego4d/v2/annotations/moments_val.json"):
+def index_moments(json_path, keep_vid):
     moments_raw = load_json(json_path)['videos']
-    moment_dict = defaultdict(list)
+    moment_dict = dict()
     avg_len = []
     for v_data in moments_raw:
+        if v_data['video_uid'] not in keep_vid:
+            continue
         moment_list = []
         for moment_data in v_data['clips']:
             # print(moment_data['video_start_sec'], moment_data['video_end_sec'])
