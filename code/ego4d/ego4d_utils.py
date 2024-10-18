@@ -184,8 +184,9 @@ def index_narrations(folder, keep_vid):
     narration_dict = defaultdict(list)
     # summary_dict = defaultdict(list)
     avg_len = []
-    # for v_id, narr in narration_raw.items():
-    for v_id in keep_vid:
+    for v_id, narr in narration_raw.items():
+        if v_id not in keep_vid:
+            continue
         narr = narration_raw[v_id]    
         narr_list = []
         summ_list = []
@@ -209,17 +210,6 @@ def index_narrations(folder, keep_vid):
             avg_len.append(len(narration_dict[v_id]))
         else:
             narration_dict[v_id] = []
-        # if len(summ_list) > 0:
-        #     summary_dict[v_id] = [
-        #         (
-        #             float(s_t["start_sec"]),
-        #             float(s_t["end_sec"]),
-        #             s_t["summary_text"],
-        #         )
-        #         for s_t in summ_list
-        #     ]
-        # else:
-        #     summary_dict[v_id] = []
     return narration_dict
 
 

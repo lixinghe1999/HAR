@@ -8,7 +8,6 @@ import math
 import string
 import librosa
 import json
-from tqdm import tqdm
 import pandas as pd
 
 def prepare_narration(narration_dict, metadata, meta_audio, meta_imu, modality, window_sec):
@@ -141,7 +140,7 @@ def prepare_moment(moment_dict, metadata, meta_audio, meta_imu, modality, window
     return window_idx, scenario_map
 
 class Ego4D_Narration(Dataset):
-    def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio']):
+    def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio', 'capture24']):
         self.folder = folder
         self.modal = modal
         self.window_sec = window_sec
@@ -158,18 +157,17 @@ class Ego4D_Narration(Dataset):
             meta_audio = [v[:-4] for v in os.listdir(os.path.join(self.folder, "audio"))]
             filter_video_uid = []
             for video_uid in list(metadata.keys()):
-                keep_or_not = True
                 if "imu" in modal and video_uid not in meta_imu:
-                    keep_or_not = False
+                    continue
                 if "audio" in modal and video_uid not in meta_audio:
-                    keep_or_not = False
-                if keep_or_not:
-                    filter_video_uid.append(video_uid)
+                    continue
+                filter_video_uid.append(video_uid)
             narration_dict = index_narrations(os.path.join(self.folder, "annotations/narration.json"), filter_video_uid)
             self.window_idx, self.scenario_map = prepare_narration(narration_dict, metadata, meta_audio, meta_imu, self.modal, window_sec)
             # save scenario_map
             with open('resources/scenario_map.json', 'w') as f:
                 json.dump(self.scenario_map, f, indent=4)
+            self.capture24 = np.load('./resources/ego4d_local_mapping.npy')
         print(f"There are {len(self.window_idx)} windows to process.")
         self.sr_imu = 200
         self.sr_audio = 16000
@@ -236,7 +234,6 @@ class Ego4D_Narration(Dataset):
         support_idx = list(set(range(len(self.window_idx))) - set(novel_idx))
         print('Support size: {}, Novel size: {}'.format(len(support_idx), len(novel_idx)))
         return support_idx, novel_idx
-
     def __getitem__(self, i):
         data_samele = self.window_idx[i]
         dict_out = {}
@@ -253,23 +250,17 @@ class Ego4D_Narration(Dataset):
         if 'imu' in self.modal:
             imu = np.load(os.path.join(self.folder, 'processed_imu', f"{uid}.npy")).astype(np.float32)
             imu = imu[:, int(w_s*self.sr_imu): int(w_e*self.sr_imu)]
+            if imu.shape[-1] < self.sr_imu * self.window_sec:
+                imu = np.pad(imu, ((0,0), (0, self.sr_imu * self.window_sec - imu.shape[-1])))
             dict_out["imu"] = imu
         if 'audio' in self.modal:
-            if 'context_audio' in self.modal: # no need to load twice
-                add_width = 2
-                audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
-                                     offset=w_s-add_width, duration=self.window_sec+2*add_width, sr=self.sr_audio)
-                if audio.shape[-1] < self.sr_audio * (self.window_sec + add_width*2):
-                    audio = np.pad(audio, (0, self.sr_audio * (self.window_sec + add_width*2) - audio.shape[-1]))
-                dict_out["context_audio"] = audio
-                audio = audio[add_width*self.sr_audio:-add_width*self.sr_audio]
-                dict_out["audio"] = audio
-            else:
-                audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
-                                        offset=w_s, duration=self.window_sec, sr=self.sr_audio)
-                if audio.shape[-1] < self.sr_audio * self.window_sec:
-                    audio = np.pad(audio, (0, self.sr_audio * self.window_sec - audio.shape[-1]))
-                dict_out["audio"] = audio
+            audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
+                                    offset=w_s, duration=self.window_sec, sr=self.sr_audio)
+            if audio.shape[-1] < self.sr_audio * self.window_sec:
+                audio = np.pad(audio, (0, self.sr_audio * self.window_sec - audio.shape[-1]))
+            dict_out["audio"] = audio
+        if 'capture24' in self.modal:
+            dict_out['capture24'] = self.capture24[:, i]
         return dict_out
 
 class Ego4D_Sound(Ego4D_Narration):
@@ -336,80 +327,6 @@ class Ego4D_Sound(Ego4D_Narration):
         print('Total scenarios:', len(self.scenario_map))
         self.sr_audio = 16000
         self.sr_imu = 200
-
-class Ego4D_Moment(Ego4D_Narration):
-    def __init__(self, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio'], split='train'):
-        self.folder = folder
-        self.modal = modal
-        self.window_sec = window_sec
-        metadata = get_ego4d_metadata(os.path.join(self.folder, "ego4d.json"), "video")
-        meta_imu = json.load(open(os.path.join(self.folder, "annotations/meta_imu.json"), 'r'))
-        meta_audio = [v[:-4] for v in os.listdir(os.path.join(self.folder, "audio"))]
-        filter_video_uid = []
-        for video_uid in list(metadata.keys()):
-            keep_or_not = True
-            if "imu" in modal and video_uid not in meta_imu:
-                keep_or_not = False
-            if "audio" in modal and video_uid not in meta_audio:
-                keep_or_not = False
-            if keep_or_not:
-                filter_video_uid.append(video_uid)
-
-        moment_dict = index_moments(os.path.join(self.folder, "annotations/moments_{}.json".format(split)), filter_video_uid)
-        self.window_idx, self.scenario_map = prepare_moment(moment_dict, metadata, meta_audio, meta_imu, self.modal, window_sec)
-        print(f"There are {len(self.window_idx)} windows to process.", len(self.scenario_map))
-        self.sr_imu = 200
-        self.sr_audio = 16000
-
-    def moment_cluster(self):
-        '''
-        Cluster the moments into different categories
-        '''
-        import matplotlib.pyplot as plt
-
-        noun_file = '../dataset/ego4d/v2/annotations/narration_noun_taxonomy.csv'
-        verb_file = '../dataset/ego4d/v2/annotations/narration_verb_taxonomy.csv'
-        # converter groups, str to list
-        noun = pd.read_csv(noun_file, delimiter=',', converters={'group': eval})
-        verb = pd.read_csv(verb_file, delimiter=',', converters={'group': eval})
-        num_noun = len(noun); num_verb = len(verb)
-        noun_count = np.zeros(num_noun, dtype=np.int32); verb_count = np.zeros(num_verb, dtype=np.int32)
-        # convert noun and verb to dict mapping,  two column, label, group, map each of groups to label
-        noun_dict = {}; verb_dict = {}
-        for idx, row in noun.iterrows():
-            for g in row['group']:
-                noun_dict[g] = (row['label'].strip(), idx)
-        for idx, row in verb.iterrows():
-            for g in row['group']:
-                verb_dict[g] = (row['label'].strip(), idx)
-        for i in range(len(self.window_idx)):
-            moment = self.window_idx[i]['text']
-            moment = moment.replace('_/_', '_').split('_')
-            # print('Moment:', moment)
-            for word in moment:
-                if word in noun_dict:
-                    noun_count[noun_dict[word][1]] += 1
-                if word in verb_dict:
-                    verb_count[verb_dict[word][1]] += 1
-        # sort the noun verb and idx by count
-        noun_idx = np.argsort(noun_count)[::-1]
-        verb_idx = np.argsort(verb_count)[::-1]
-        noun_words = [noun.iloc[i]['label'] for i in noun_idx]
-        verb_words = [verb.iloc[i]['label'] for i in verb_idx]
-        # save the noun and verb to file
-        with open('noun.txt', 'w') as f:
-            for i in range(num_noun):
-                f.write(f'{noun_words[i]}: {noun_count[noun_idx[i]]}\n')
-        with open('verb.txt', 'w') as f:
-            for i in range(num_verb):
-                f.write(f'{verb_words[i]}: {verb_count[verb_idx[i]]}\n')
-
-        fig, ax = plt.subplots(2, 1)
-        ax[0].bar(range(num_noun), noun_count[noun_idx])
-        ax[0].set_title('Noun')
-        ax[1].bar(range(num_verb), verb_count[verb_idx])
-        ax[1].set_title('Verb')
-        plt.savefig('moment_cluster.png')
 
 class Ego4D_Narration_Sequence(Ego4D_Narration):
     '''
@@ -515,6 +432,98 @@ class Ego4D_Free(Ego4D_Narration):
         return len(self.window_idx)
 
 
-if __name__ == '__main__':
-    dataset = Ego4D_Narration(window_sec=1, folder='../../dataset/ego4d/v2/', modal=['audio', 'imu'])
+def prepare_imu2clip(filter_video_uid):
+    annotation_dir = 'ego4d/splits'
+    annotation_file = 'dataset_motion_narr_2.5.csv'
+    pd_data = pd.read_csv(os.path.join(annotation_dir, annotation_file))
+    imu2clip_label = []
+    scenario_map = {'moves head': 0, "walk": 1, "sits down": 2, "stands up": 3, "looks up": 0, "looks down": 0, "looks around": 0, 
+                    "jumping": 1, "cycling": 1}
+    scenario_count = [0] * 4
+    for idx, row in pd_data.iterrows():
+        video_uid = row['video_uid']
+        if video_uid not in filter_video_uid:
+            continue
+        else:
+            scenario_idx = scenario_map[row['label']]
+            imu2clip_label.append({"video_uid": video_uid, 
+                                   "window_start": row['window_start'], "window_end": row['window_end'],
+                                     "scenario":scenario_idx, "text": ""})
+            scenario_count[scenario_idx] += 1
+    scenario_map = {v:k for k,v in scenario_map.items()}
+    print('Scenario count:', scenario_count)
+    return imu2clip_label, scenario_map
+class Ego4D_IMU2CLIP(Ego4D_Narration):
+    def __init__(self, folder='../dataset/ego4d/v2/', window_sec=5, modal=['imu', 'audio']):
+        self.folder = folder
+        self.window_sec = window_sec
+        self.modal = modal
+        metadata = get_ego4d_metadata(os.path.join(self.folder, "ego4d.json"), "video")
+        meta_imu = json.load(open(os.path.join(self.folder, "annotations/meta_imu.json"), 'r'))
+        meta_audio = [v[:-4] for v in os.listdir(os.path.join(self.folder, "audio"))]
+        filter_video_uid = []
+        for video_uid in list(metadata.keys()):
+            keep_or_not = True
+            if "imu" in modal and video_uid not in meta_imu:
+                keep_or_not = False
+            if "audio" in modal and video_uid not in meta_audio:
+                keep_or_not = False
+            if keep_or_not:
+                filter_video_uid.append(video_uid)
+        self.window_idx, self.scenario_map = prepare_imu2clip(filter_video_uid)
+        self.sr_imu = 200
+        self.sr_audio = 16000
+    def __len__(self):
+        return len(self.window_idx)
+
+class Ego4D_Understanding(Dataset):
+    def __init__(self, folder='../dataset/ego4d/v2/', window_sec=20, modal=['imu', 'audio']):
+        self.folder = folder
+        self.window_sec = window_sec
+        self.modal = modal
+        metadata = get_ego4d_metadata(os.path.join(self.folder, "ego4d.json"), "video")
+        meta_imu = json.load(open(os.path.join(self.folder, "annotations/meta_imu.json"), 'r'))
+        meta_audio = [v[:-4] for v in os.listdir(os.path.join(self.folder, "audio"))]
+        filter_video_uid = []
+        for video_uid in list(metadata.keys()):
+            keep_or_not = True
+            if "imu" in modal and video_uid not in meta_imu:
+                keep_or_not = False
+            if "audio" in modal and video_uid not in meta_audio:
+                keep_or_not = False
+            if keep_or_not:
+                filter_video_uid.append(video_uid)
+        self.window_idx, self.scenario_map = prepare_free(filter_video_uid, metadata, meta_audio, meta_imu, modal, window_sec)
+        print(f"There are {len(self.window_idx)} windows to process.")
+        self.sr_imu = 200
+        self.sr_audio = 16000
+
+    def __len__(self): 
+        return len(self.window_idx)
+    def __getitem__(self, i):
+        dict_out = self.window_idx[i].copy()
+        print(dict_out)
+
+        audio_label = os.path.join(self.folder, 'audio_label', f"{dict_out['video_uid']}.json")
+        audio_label = json.load(open(audio_label, 'r'))
+        print(audio_label)
+
+        # scenario_vec = np.zeros(len(self.scenario_map), dtype=float)
+        # scenario_vec[dict_out['scenario']] = 1
+        # dict_out['scenario'] = scenario_vec
+        # if 'imu' in self.modal:
+        #     imu = np.load(os.path.join(self.folder, 'processed_imu', f"{uid}.npy")).astype(np.float32)
+        #     imu = imu[:, int(w_s*self.sr_imu): int(w_e*self.sr_imu)]
+        #     dict_out["imu"] = imu
+        # if 'audio' in self.modal:
+        #     audio, sr = librosa.load(os.path.join(self.folder, 'audio', f"{uid}.mp3"), 
+        #                             offset=w_s, duration=self.window_sec, sr=self.sr_audio)
+        #     if audio.shape[-1] < self.sr_audio * self.window_sec:
+        #         audio = np.pad(audio, (0, self.sr_audio * self.window_sec - audio.shape[-1]))
+        #     dict_out["audio"] = audio
+        # if 'capture24' in self.modal:
+        #     dict_out['capture24'] = self.capture24[:, i]
+        return dict_out
+    
+
 

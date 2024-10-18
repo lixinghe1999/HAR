@@ -2,11 +2,10 @@
 Scenario Recognition for Ego4D and EgoExo4D
 '''
 
-from egoexo.egoexo_dataset import EgoExo_atomic
 from ego4d.ego4d_dataset import Ego4D_Narration, Ego4D_Narration_Sequence, Ego4D_Free, Ego4D_Sound
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from models.body_sound import Body_Sound
+from models.multi_modal import Multi_modal_model
 import numpy as np
 import datetime
 import argparse
@@ -37,10 +36,7 @@ def scenario(train_loader, test_loader, model, log_dir, args):
     with torch.no_grad():
         preds, gts = [], []
         for i, data in enumerate(tqdm(test_loader)): 
-            if i > 200:
-                break
             pred, gt = model(data, train=False, sequence=args.sequence, modality_mask=args.modality_mask)
-            # print(torch.sigmoid(pred), gt)
             preds.append(pred.cpu()); gts.append(gt.cpu())
         preds = torch.cat(preds, dim=0)
         gts = torch.cat(gts, dim=0)
@@ -55,6 +51,7 @@ def scenario(train_loader, test_loader, model, log_dir, args):
         preds = preds.argmax(dim=1); gts = gts.argmax(dim=1)
         acc = accuracy(preds, gts).item()
     print(f'The {args.eval} evaluation results is {acc}')
+
 def body_sound(train_loader, test_loader, model, log_dir, args):
     if args.train:
         best_loss = 100
@@ -138,17 +135,17 @@ if __name__ == '__main__':
     parser.add_argument('--train', action='store_true', default=False)
     parser.add_argument('--log', type=str, default=None) # work on existing log, auto make a new log by time, or work on a specific log
     parser.add_argument('--ckpt', type=str, default=None)
-    parser.add_argument('--dataset', type=str, default='ego4d_narration', choices=['ego4d_narration', 'ego4d_free', 'egoexo', 'ego4d_sound'])
+    parser.add_argument('--dataset', type=str, default='ego4d_narration', choices=['ego4d_narration', 'ego4d_free', 'ego4d_sound'])
     parser.add_argument('--sequence', type=int, default=0)
     parser.add_argument('--mode', type=str, default='scenario') # body_sound - contrastive learning, scenario - classification
-    parser.add_argument('--epoch', type=int, default=5) # if train = False, epoch is set to 0
+    parser.add_argument('--epoch', type=int, default=1) # if train = False, epoch is set to 0
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--window_sec', type=int, default=2)
     parser.add_argument('--eval', type=str, default='multi-label', choices=['multi-label', 'multi-class']) 
     parser.add_argument('--num_class', type=int, default=91)
     parser.add_argument('--modality_mask', type=str, default=None, choices=['audio', 'imu'])
     args = parser.parse_args()
-    model = Body_Sound(sequence=args.sequence, num_class=args.num_class).to('cuda')
+    model = Multi_modal_model(sequence=args.sequence, num_class=args.num_class).to('cuda')
     if args.log is None: # No log and train, create a new log
         if args.train:
             log_dir = 'resources/{}'.format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
@@ -171,7 +168,7 @@ if __name__ == '__main__':
             else:
                 print('Working on existing log_dir: {}'.format(log_dir))
     if args.dataset == 'ego4d_narration':
-        dataset = Ego4D_Narration(pre_compute_json='resources/ego4d_narration_prune.json', window_sec=args.window_sec, modal=['audio', 'imu']) 
+        dataset = Ego4D_Narration(window_sec=args.window_sec, modal=['audio', 'imu']) 
         if args.sequence > 0:
             dataset = Ego4D_Narration_Sequence(dataset, args.sequence)
     elif args.dataset == 'ego4d_sound':
@@ -180,9 +177,7 @@ if __name__ == '__main__':
             dataset = Ego4D_Narration_Sequence(dataset, args.sequence)
     elif args.dataset == 'ego4d_free':
         dataset = Ego4D_Free(window_sec=args.window_sec, modal=['audio', 'imu']) # or you can set window_sec = sequence * 2 to make it fair
-    elif args.dataset == 'egoexo':
-        dataset = EgoExo_atomic(window_sec=args.window_sec, modal=['audio', 'imu'])
-        dataset.prune_slience()
+
 
     train_idx, test_idx = dataset.split_with_scenario(ratio=0.8)
     train_dataset = torch.utils.data.Subset(dataset, train_idx)

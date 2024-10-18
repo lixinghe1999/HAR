@@ -1,6 +1,6 @@
 from bert import LIMUBertModel4Pretrain, ClassifierGRU, BERTClassifier
 from limu_bert_dataset import Baseline_Dataset
-from capture24_dataset import Capture24_Dataset
+# from capture24_dataset import Capture24_Dataset
 from preprocess import Preprocess4Mask, Preprocess4Normalization, Preprocess4Rotation, Preprocess4Sample
 
 import torch
@@ -57,13 +57,11 @@ def test(dataset, model, device):
 def fine_tune(model, device, num_epochs):
     batch_size = 32
     lr = 1e-5
-    # pipeline = [Preprocess4Normalization(6), Preprocess4Rotation()]
+    pipeline = [Preprocess4Normalization(6), Preprocess4Rotation()]
     pipeline = []
-    # train_dataset = Baseline_Dataset(datasets=['uci'], split='train', supervised=True, seq_len=seq_len, pipeline=pipeline)
-    # test_dataset = Baseline_Dataset(datasets=['uci'], split='val', supervised=True, seq_len=seq_len, pipeline=pipeline)
+    train_dataset = Baseline_Dataset(datasets=['uci'], split='train', supervised=True, seq_len=seq_len, pipeline=pipeline)
+    test_dataset = Baseline_Dataset(datasets=['uci'], split='val', supervised=True, seq_len=seq_len, pipeline=pipeline)
 
-    train_dataset = Capture24_Dataset(dataset_folder='capture24', supervised=True, split='train', seq_len=seq_len, pipeline=pipeline)
-    test_dataset = Capture24_Dataset(dataset_folder='capture24', supervised=True, split='val', seq_len=seq_len, pipeline=pipeline)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
