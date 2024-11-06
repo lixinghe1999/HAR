@@ -3,7 +3,6 @@ from models.audio_models import Mobilenet_Encoder
 from models.imu_models import TransformerEncoder
 import torch
 import numpy as np
-import time
 class ClipLoss(nn.Module):
     def __init__(
             self,
@@ -60,7 +59,8 @@ class Multi_modal_model(nn.Module):
 
         if sequence > 0:
             # self.sequence_model = nn.LSTM(768, 768, 1, batch_first=True)
-            self.sequence_model = TransformerEncoder(768, 768, 4)
+            transformer_layer = nn.TransformerEncoderLayer(d_model=768, nhead=4, dim_feedforward=768)
+            self.sequence_model = nn.TransformerEncoder(transformer_layer, num_layers=4)
         self.fc = nn.Linear(768, num_class)
     def freeze_body_sound(self):
         for param in self.proj_audio.parameters():
@@ -110,23 +110,24 @@ class Multi_modal_model(nn.Module):
             audio = audio.reshape(-1, sequence, audio.shape[-1])
             imu = imu.reshape(-1, sequence, imu.shape[-1])
             feature = torch.cat([audio, imu], dim=2) 
-            feature, _ = self.sequence_model(feature)
+            # feature, _ = self.sequence_model(feature)
+            feature = self.sequence_model(feature)
             feature = feature[:, -1, :]
-            # feature = self.sequence_model(feature)
         else:
             feature = torch.cat([audio, imu], dim=1)
-        output = self.fc(feature); 
-        if target == 'scenario':
-            ground_truth = data['scenario'].to(device)
-        else:
-            ground_truth = data['capture24'][:, :50].to(device)
-            ground_truth = torch.argmax(ground_truth, dim=1)
-        if train:
-            loss = nn.functional.binary_cross_entropy_with_logits(output, ground_truth)
-            # loss = nn.functional.cross_entropy(output, ground_truth)
-            return loss
-        else:
-            return output, ground_truth
+        output = self.fc(feature)
+        return output
+        # if target == 'capture':
+        #     ground_truth = data['scenario'].to(device)
+        # else:
+        #     ground_truth = data['capture24'][:, :50].to(device)
+        #     ground_truth = torch.argmax(ground_truth, dim=1)
+        # if train:
+        #     # loss = nn.functional.binary_cross_entropy_with_logits(output, ground_truth)
+        #     loss = nn.functional.cross_entropy(output, ground_truth)
+        #     return loss
+        # else:
+        #     return output, ground_truth
 
     def match_eval(self, audio, imu, return_index=False):
         '''

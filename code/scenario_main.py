@@ -76,13 +76,17 @@ def body_sound(train_loader, test_loader, model, log_dir, args):
     with torch.no_grad():
         embeddings = {'audio':[], 'imu': [], 'scenario': []}
         for i, data in enumerate(tqdm(test_loader)): 
+            # if i > 10:
+            #     break
             audio_output, imu_output = model.forward_contrastive(data, train=False, sequence=args.sequence)
             embeddings['audio'].append(audio_output.cpu().numpy())
             embeddings['imu'].append(imu_output.cpu().numpy())
             embeddings['scenario'].append(data['scenario'].cpu().numpy())
         for key in embeddings:
             embeddings[key] = np.concatenate(embeddings[key], axis=0)
-        retrieval(embeddings, model)
+    # save embeddings
+    np.savez('{}/embeddings.npz'.format(log_dir), **embeddings)
+    retrieval(embeddings, model)
 def retrieval(embeddings, model):
     def norm_cosine_similarity_matrix(a, b):
         dot_product = a @ b.T
@@ -94,42 +98,42 @@ def retrieval(embeddings, model):
     num_samples = len(embeddings['audio'])
 
     # Batch-evaluation, intuition and convenience
-    # for b in [4, 8, 16, 32, 64]:
-    #     audio_acc, imu_acc = 0, 0
-    #     for i in range(0, num_samples, b):
-    #         audio = torch.tensor(embeddings['audio'][i:i+b])
-    #         imu = torch.tensor(embeddings['imu'][i:i+b])       
-    #         audio_match_acc, imu_match_acc = model.match_eval(audio, imu, return_index=False)
-    #         audio_acc += audio_match_acc
-    #         imu_acc += imu_match_acc
-    #     average_audio_acc = round(audio_acc / (num_samples // b), 3)
-    #     average_imu_acc = round(imu_acc / (num_samples // b), 3)
-    #     print(f'batch size: {b}, audio_acc: {average_audio_acc}, imu_acc: {average_imu_acc}')
+    for b in [4, 8, 16, 32, 64]:
+        audio_acc, imu_acc = 0, 0
+        for i in range(0, num_samples, b):
+            audio = torch.tensor(embeddings['audio'][i:i+b])
+            imu = torch.tensor(embeddings['imu'][i:i+b])       
+            audio_match_acc, imu_match_acc = model.match_eval(audio, imu, return_index=False)
+            audio_acc += audio_match_acc
+            imu_acc += imu_match_acc
+        average_audio_acc = round(audio_acc / (num_samples // b), 3)
+        average_imu_acc = round(imu_acc / (num_samples // b), 3)
+        print(f'batch size: {b}, audio_acc: {average_audio_acc}, imu_acc: {average_imu_acc}')
 
     # split embeddings by scenario
-    scenario_idx = {}
-    for i in range(91):
-        scenario_idx[i] = []
-        for j in range(num_samples):
-            if embeddings['scenario'][j, i] == 1:
-                scenario_idx[i].append(j)
-    diffs = []
-    for i in range(91):
-        select_idx = scenario_idx[i]
-        remain_idx = list(set(range(num_samples)) - set(select_idx))
-        if len(select_idx) == 0 or len(remain_idx) == 0:
-            continue
-        audio = torch.tensor(embeddings['audio'][select_idx]); imu = torch.tensor(embeddings['imu'][select_idx])
+    # scenario_idx = {}
+    # for i in range(91):
+    #     scenario_idx[i] = []
+    #     for j in range(num_samples):
+    #         if embeddings['scenario'][j, i] == 1:
+    #             scenario_idx[i].append(j)
+    # diffs = []
+    # for i in range(91):
+    #     select_idx = scenario_idx[i]
+    #     remain_idx = list(set(range(num_samples)) - set(select_idx))
+    #     if len(select_idx) == 0 or len(remain_idx) == 0:
+    #         continue
+    #     audio = torch.tensor(embeddings['audio'][select_idx]); imu = torch.tensor(embeddings['imu'][select_idx])
 
-        # normalize cosine similarity
-        average_similarity = norm_cosine_similarity_matrix(audio, imu)
-        remain_audio = torch.tensor(embeddings['audio'][remain_idx]); remain_imu = torch.tensor(embeddings['imu'][remain_idx])
+    #     # normalize cosine similarity
+    #     average_similarity = norm_cosine_similarity_matrix(audio, imu)
+    #     remain_audio = torch.tensor(embeddings['audio'][remain_idx]); remain_imu = torch.tensor(embeddings['imu'][remain_idx])
 
-        next_average_similarity = (norm_cosine_similarity_matrix(remain_audio, imu) + norm_cosine_similarity_matrix(audio, remain_imu))/2
-        diff = average_similarity - next_average_similarity
-        diffs.append(diff)
-        print('Intra-scenario similarity: {}, Inter-scenario similarity: {}'.format(average_similarity, next_average_similarity))
-    print('Average difference: {}'.format(np.mean(diffs)))
+    #     next_average_similarity = (norm_cosine_similarity_matrix(remain_audio, imu) + norm_cosine_similarity_matrix(audio, remain_imu))/2
+    #     diff = average_similarity - next_average_similarity
+    #     diffs.append(diff)
+    #     print('Intra-scenario similarity: {}, Inter-scenario similarity: {}'.format(average_similarity, next_average_similarity))
+    # print('Average difference: {}'.format(np.mean(diffs)))
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--train', action='store_true', default=False)

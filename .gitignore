@@ -1,6 +1,7 @@
 dataset
 code/figs
 code/cache
+code/lightning_logs
 code/resources
 *.zip
 *.pyc

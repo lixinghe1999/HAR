@@ -138,6 +138,27 @@ def prepare_moment(moment_dict, metadata, meta_audio, meta_imu, modality, window
             }
             window_idx.append(input_dict)
     return window_idx, scenario_map
+def prepare_imu2clip(filter_video_uid):
+    annotation_dir = 'ego4d/splits'
+    annotation_file = 'dataset_motion_narr_2.5.csv'
+    pd_data = pd.read_csv(os.path.join(annotation_dir, annotation_file))
+    imu2clip_label = []
+    scenario_map = {'moves head': 0, "walk": 1, "sits down": 2, "stands up": 3, "looks up": 0, "looks down": 0, "looks around": 0, 
+                    "jumping": 1, "cycling": 1}
+    scenario_count = [0] * 4
+    for idx, row in pd_data.iterrows():
+        video_uid = row['video_uid']
+        if video_uid not in filter_video_uid:
+            continue
+        else:
+            scenario_idx = scenario_map[row['label']]
+            imu2clip_label.append({"video_uid": video_uid, 
+                                   "window_start": row['window_start'], "window_end": row['window_end'],
+                                     "scenario":scenario_idx, "text": ""})
+            scenario_count[scenario_idx] += 1
+    scenario_map = {v:k for k,v in scenario_map.items()}
+    print('Scenario count:', scenario_count)
+    return imu2clip_label, scenario_map
 
 class Ego4D_Narration(Dataset):
     def __init__(self, pre_compute_json=None, folder='../dataset/ego4d/v2/', window_sec = 2, modal=['imu', 'audio', 'capture24']):
@@ -263,6 +284,30 @@ class Ego4D_Narration(Dataset):
             dict_out['capture24'] = self.capture24[:, i]
         return dict_out
 
+class Ego4D_Moment(Ego4D_Narration):
+    def __init__(self, folder='../dataset/ego4d/v2/', window_sec=2, modal=['imu', 'audio'], split='train'):
+        self.folder = folder
+        self.window_sec = window_sec
+        self.modal = modal
+
+        metadata = get_ego4d_metadata(os.path.join(self.folder, "ego4d.json"), "video")
+        meta_imu = json.load(open(os.path.join(self.folder, "annotations/meta_imu.json"), 'r'))
+        meta_audio = [v[:-4] for v in os.listdir(os.path.join(self.folder, "audio"))]
+        filter_video_uid = []
+        for video_uid in list(metadata.keys()):
+            if "imu" in modal and video_uid not in meta_imu:
+                continue
+            if "audio" in modal and video_uid not in meta_audio:
+                continue
+            filter_video_uid.append(video_uid)     
+        moment_dict = index_moments(os.path.join(self.folder, "annotations/moments_{}.json".format(split)), filter_video_uid)    
+        self.window_idx, self.scenario_map = prepare_moment(moment_dict, metadata, meta_audio, meta_imu, modal, window_sec)
+        print(f"There are {len(self.window_idx)} windows to process.")
+        self.sr_imu = 200
+        self.sr_audio = 16000
+    def __len__(self):
+        return len(self.window_idx)
+    
 class Ego4D_Sound(Ego4D_Narration):
     def __init__(self, meta_csv='ego4d/train_clips_1.2m.csv', folder='../dataset/ego4d/v2/', 
                  window_sec = 2, modal=['imu', 'audio']):
@@ -431,28 +476,6 @@ class Ego4D_Free(Ego4D_Narration):
     def __len__(self):
         return len(self.window_idx)
 
-
-def prepare_imu2clip(filter_video_uid):
-    annotation_dir = 'ego4d/splits'
-    annotation_file = 'dataset_motion_narr_2.5.csv'
-    pd_data = pd.read_csv(os.path.join(annotation_dir, annotation_file))
-    imu2clip_label = []
-    scenario_map = {'moves head': 0, "walk": 1, "sits down": 2, "stands up": 3, "looks up": 0, "looks down": 0, "looks around": 0, 
-                    "jumping": 1, "cycling": 1}
-    scenario_count = [0] * 4
-    for idx, row in pd_data.iterrows():
-        video_uid = row['video_uid']
-        if video_uid not in filter_video_uid:
-            continue
-        else:
-            scenario_idx = scenario_map[row['label']]
-            imu2clip_label.append({"video_uid": video_uid, 
-                                   "window_start": row['window_start'], "window_end": row['window_end'],
-                                     "scenario":scenario_idx, "text": ""})
-            scenario_count[scenario_idx] += 1
-    scenario_map = {v:k for k,v in scenario_map.items()}
-    print('Scenario count:', scenario_count)
-    return imu2clip_label, scenario_map
 class Ego4D_IMU2CLIP(Ego4D_Narration):
     def __init__(self, folder='../dataset/ego4d/v2/', window_sec=5, modal=['imu', 'audio']):
         self.folder = folder
