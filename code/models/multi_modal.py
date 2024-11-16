@@ -147,3 +147,4 @@ class Multi_modal_model(nn.Module):
             return audio_match_acc, imu_match_acc, audio_match_mask, imu_match_mask
         else:
             return audio_match_acc, imu_match_acc
+        
