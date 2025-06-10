@@ -38,6 +38,8 @@ for line in lines[1:]:
     start, end, har = line[0], line[1], line[2]
     # find the activity in the activities file
     attribute = df[df['activity'] == har]
+    scenario = attribute['scenario'].values[0]
+    print('Activity:', har, 'Scenario:', scenario)
     # get the column name of the activity (=1)
     attribute = attribute.columns[attribute.eq(1).any()].to_list()
     attribute = '_'.join(attribute)
@@ -54,7 +56,7 @@ for line in lines[1:]:
         audio_file_segment = os.path.join(data_file, f'{segment_count},{har},{attribute}.mp3')
         sf.write(audio_file_segment, audio_segment, sample_rate)
 
-        imu_file_segment = os.path.join(data_file, f'{segment_count},{har},{attribute}.npy')
+        imu_file_segment = os.path.join(data_file, f'{segment_count},{har},{scenario},{attribute}.npy')
         np.save(imu_file_segment, imu_segment)
         segment_count += 1
 

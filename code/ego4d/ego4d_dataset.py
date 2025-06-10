@@ -188,7 +188,7 @@ class Ego4D_Narration(Dataset):
             # save scenario_map
             with open('resources/scenario_map.json', 'w') as f:
                 json.dump(self.scenario_map, f, indent=4)
-            self.capture24 = np.load('./resources/ego4d_local_mapping.npy')
+            # self.capture24 = np.load('./resources/ego4d_local_mapping.npy')
         print(f"There are {len(self.window_idx)} windows to process.")
         self.sr_imu = 200
         self.sr_audio = 16000
@@ -264,6 +264,7 @@ class Ego4D_Narration(Dataset):
         dict_out['timestamp'] = (w_s + w_e) / 2
         dict_out['scenario'] = data_samele['scenario']
         dict_out['text'] = [data_samele['text']]
+        dict_out['video_uid'] = uid
 
         scenario_vec = np.zeros(len(self.scenario_map), dtype=float)
         scenario_vec[dict_out['scenario']] = 1

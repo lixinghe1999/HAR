@@ -75,7 +75,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
 
-    model = Body_Sound(num_class=args.num_class).to('cuda')
+    model = Multi_modal_model(num_class=args.num_class).to('cuda')
     if args.log is None: # No log and train, create a new log
         if args.train:
             log_dir = 'resources/{}'.format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
