@@ -3,8 +3,7 @@ import librosa
 import soundfile as sf
 import os
 import pandas as pd
-from utils.tracking import imu_loading, imu_fusion, imu_tracking, plot_sensor, plot_tracking
-sample_rate = 16000
+from utils.tracking import imu_loading
 length = 5
 # load the audio from the video
 def load_audio(video_file, audio_file):

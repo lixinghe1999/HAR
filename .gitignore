@@ -1,8 +1,10 @@
 dataset
 code/figs
 code/cache
+code/runs
 code/lightning_logs
 code/resources
+code/plot/figs
 *.zip
 *.pyc
 *.pth

@@ -84,7 +84,7 @@ class Multi_modal_model(nn.Module):
         else:
             return audio, imu
 
-    def forward(self, data, train=False, sequence=0, device='cuda', modality_mask=None, target='scenario'):
+    def forward(self, data, sequence=0, device='cuda', modality_mask=None,):
         '''
         input: audio + imu
         modality_mask: set to 0
@@ -102,6 +102,9 @@ class Multi_modal_model(nn.Module):
                 imu = imu.reshape(imu.shape[0], sequence, imu.shape[1], -1) # [B, C, D] -> [B, S, C, D']
             audio = audio.reshape(-1, audio.shape[-1]) # [B, S, D] -> [B*S, D]
             imu = imu.reshape(-1, *imu.shape[-2:]) # [B, S, C, D] -> [B*S, C, D]
+        else:
+            audio = audio.reshape(-1, audio.shape[-1])
+            imu = imu.reshape(-1, *imu.shape[-2:])
        
         _, audio_feature = self.audio_model(audio)
         audio = self.proj_audio(audio_feature)
@@ -110,24 +113,15 @@ class Multi_modal_model(nn.Module):
             audio = audio.reshape(-1, sequence, audio.shape[-1])
             imu = imu.reshape(-1, sequence, imu.shape[-1])
             feature = torch.cat([audio, imu], dim=2) 
-            # feature, _ = self.sequence_model(feature)
             feature = self.sequence_model(feature)
             feature = feature[:, -1, :]
         else:
+            audio = audio.reshape(-1, audio.shape[-1])
+            imu = imu.reshape(-1, imu.shape[-1])
             feature = torch.cat([audio, imu], dim=1)
         output = self.fc(feature)
+
         return output
-        # if target == 'capture':
-        #     ground_truth = data['scenario'].to(device)
-        # else:
-        #     ground_truth = data['capture24'][:, :50].to(device)
-        #     ground_truth = torch.argmax(ground_truth, dim=1)
-        # if train:
-        #     # loss = nn.functional.binary_cross_entropy_with_logits(output, ground_truth)
-        #     loss = nn.functional.cross_entropy(output, ground_truth)
-        #     return loss
-        # else:
-        #     return output, ground_truth
 
     def match_eval(self, audio, imu, return_index=False):
         '''

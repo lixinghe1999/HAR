@@ -158,18 +158,16 @@ def index_moments(json_path, keep_vid):
             continue
         moment_list = []
         for moment_data in v_data['clips']:
-            # print(moment_data['video_start_sec'], moment_data['video_end_sec'])
             for annotation in moment_data['annotations']:
                 labels = annotation['labels']
                 for label in labels:
-                    # print(label)
                     moment_list.append(label)
         if len(moment_list) > 0:
             moment_dict[v_data['video_uid']] = [
                 (
                     m_t['label'],
-                    m_t["video_start_time"],
-                    m_t["video_end_time"],
+                    (m_t["video_start_time"] + m_t["video_end_time"])/2,
+                    m_t["video_end_time"] - m_t["video_start_time"],
                 )
                 for m_t in moment_list
             ]
@@ -180,37 +178,50 @@ def index_moments(json_path, keep_vid):
     return moment_dict
 
 def index_narrations(folder, keep_vid):
+    print('start indexing narration')
     narration_raw = load_json(folder)
     narration_dict = defaultdict(list)
-    # summary_dict = defaultdict(list)
-    avg_len = []
-    for v_id, narr in narration_raw.items():
+    summary_dict = defaultdict(list)
+
+    for v_id, narr in tqdm(narration_raw.items()):
         if v_id not in keep_vid:
             continue
         narr = narration_raw[v_id]    
         narr_list = []
-        summ_list = []
         if "narration_pass_1" in narr:
             narr_list += narr["narration_pass_1"]["narrations"]
-            summ_list += narr["narration_pass_1"]["summaries"]
         if "narration_pass_2" in narr:
             narr_list += narr["narration_pass_2"]["narrations"]
-            summ_list += narr["narration_pass_2"]["summaries"]
+        summary_list = []
+        if "narration_pass_1" in narr:
+            summary_list += narr["narration_pass_1"]["summaries"]
+        if "narration_pass_2" in narr:
+            summary_list += narr["narration_pass_2"]["summaries"]
 
         if len(narr_list) > 0:
             narration_dict[v_id] = [
                 (
-                    float(n_t["timestamp_sec"]),
                     n_t["narration_text"],
-                    n_t["annotation_uid"],
-                    n_t["timestamp_frame"],
+                    n_t['timestamp_sec'],
+                    n_t['timestamp_frame']
                 )
                 for n_t in narr_list
             ]
-            avg_len.append(len(narration_dict[v_id]))
         else:
             narration_dict[v_id] = []
-    return narration_dict
+
+        if len(summary_list) > 0:
+            summary_dict[v_id] = [
+                (
+                    s_t["summary_text"],
+                    (s_t['start_sec'] + s_t['end_sec']) / 2,
+                    s_t['end_sec'] - s_t['start_sec'],
+                )
+                for s_t in summary_list
+            ]
+        else:
+            summary_dict[v_id] = []
+    return narration_dict, summary_dict
 
 
 def downsample_video(
